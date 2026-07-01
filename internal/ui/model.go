@@ -389,6 +389,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if n := len(m.downloading()); m.dlCursor >= n {
 				m.dlCursor = max(0, n-1)
 			}
+			// If the torrent we're asking to cancel finished (or vanished) while the
+			// confirm prompt was open, drop the prompt — it only applies to in-progress downloads.
+			if m.cancelConfirm {
+				stillDownloading := false
+				for _, s := range m.downloading() {
+					if s.InfoHash == m.cancelTarget.InfoHash {
+						stillDownloading = true
+						break
+					}
+				}
+				if !stillDownloading {
+					m.cancelConfirm = false
+				}
+			}
 		}
 		if m.notice != "" && time.Now().After(m.noticeUntil) {
 			m.notice = ""

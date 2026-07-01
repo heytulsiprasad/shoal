@@ -439,6 +439,24 @@ func TestCancelKeepAndAbort(t *testing.T) {
 	}
 }
 
+func TestCancelConfirmClearsWhenTargetCompletes(t *testing.T) {
+	eng := &fakeEngine{statuses: []engine.Status{{Name: "Movie", InfoHash: "h1", TotalBytes: 100, CompletedBytes: 10}}}
+	m := ready(New(&fakeSource{}, eng))
+	m, _ = update(m, tickMsg(time.Now()))
+	m.editing = false
+	m.section = sectionDownloads
+	m, _ = update(m, key("x"))
+	if !m.cancelConfirm {
+		t.Fatal("x should open the cancel confirm")
+	}
+	// the download completes before the user confirms
+	eng.statuses = []engine.Status{{Name: "Movie", InfoHash: "h1", TotalBytes: 100, CompletedBytes: 100, Done: true}}
+	m, _ = update(m, tickMsg(time.Now().Add(time.Second)))
+	if m.cancelConfirm {
+		t.Fatal("cancel confirm should clear once the target is no longer downloading")
+	}
+}
+
 func TestTickPollsEngineAndReschedules(t *testing.T) {
 	eng := &fakeEngine{statuses: []engine.Status{{Name: "X", TotalBytes: 100, CompletedBytes: 50}}}
 	m := ready(New(&fakeSource{}, eng))
