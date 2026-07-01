@@ -72,11 +72,12 @@ type Model struct {
 	cursor      int
 	filter      int // index into filterCats
 
-	searchCh     chan source.SourceUpdate
-	sourcesDone  int
-	sourcesTotal int
-	searchGen    int
-	searchCancel context.CancelFunc
+	searchCh       chan source.SourceUpdate
+	sourcesDone    int
+	sourcesTotal   int
+	searchGen      int
+	searchCancel   context.CancelFunc
+	searchErrCount int
 
 	sortMode  bool
 	sortCol   int
@@ -190,6 +191,7 @@ func (m *Model) startSearch(query string) tea.Cmd {
 	m.cursor = 0
 	m.sourcesDone = 0
 	m.sourcesTotal = 0
+	m.searchErrCount = 0
 	m.searching = true
 	m.hasSearched = true
 
@@ -280,6 +282,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.sourcesDone = msg.up.Done
 		m.sourcesTotal = msg.up.Total
+		if msg.up.Err != nil {
+			m.searchErrCount++
+		}
 		if n := len(m.filteredResults()); m.cursor >= n {
 			m.cursor = max(0, n-1)
 		}
@@ -291,7 +296,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.searching = false
 		if len(m.results) == 0 {
-			m.setNotice("No results.")
+			if m.sourcesTotal > 0 && m.searchErrCount >= m.sourcesTotal {
+				m.setError("Search failed.")
+			} else {
+				m.setNotice("No results.")
+			}
 		}
 		return m, nil
 
@@ -359,6 +368,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.showDetail = false
 		case "d":
+			m.showDetail = false
 			return m, addCmd(m.eng, m.detail)
 		case "y":
 			if err := copyToClipboard(m.detail.Magnet); err != nil {

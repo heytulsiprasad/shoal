@@ -271,6 +271,7 @@ func (m Model) renderDetail(w, h int) string {
 	b.WriteString(st.Row.Render(truncate(r.Title, boxW-4)) + "\n\n")
 
 	row := func(label, val string) {
+		// val may be a styled span; an empty val (e.g. relTime(0)=="" → Render("")=="") omits the row.
 		if val == "" {
 			return
 		}

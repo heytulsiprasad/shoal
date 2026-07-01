@@ -525,3 +525,40 @@ func TestSortModeKeys(t *testing.T) {
 		t.Fatalf("esc did not exit sort mode")
 	}
 }
+
+func TestDetailDownloadClearsShowDetail(t *testing.T) {
+	m := ready(New(&fakeSource{}, &fakeEngine{}))
+	m.editing = false
+	m.showDetail = true
+	m.detail = source.Result{Title: "X", TorrentURL: "u1"}
+	m, _ = update(m, key("d"))
+	if m.showDetail {
+		t.Fatalf("d in detail should clear showDetail so it doesn't hijack the next pane")
+	}
+}
+
+func TestStreamingAllErrorsShowsSearchFailed(t *testing.T) {
+	m := New(&fakeSource{}, &fakeEngine{})
+	m.searchGen = 1
+	m.searching = true
+	m.searchCh = make(chan source.SourceUpdate, 1)
+	// two sources, both error, no results
+	m, _ = update(m, sourceUpdateMsg{gen: 1, up: source.SourceUpdate{Err: errors.New("boom"), Done: 1, Total: 2}})
+	m, _ = update(m, sourceUpdateMsg{gen: 1, up: source.SourceUpdate{Err: errors.New("boom"), Done: 2, Total: 2}})
+	m, _ = update(m, searchClosedMsg{gen: 1})
+	if !m.noticeErr || !strings.Contains(m.notice, "Search failed") {
+		t.Fatalf("all-sources-failed should set a 'Search failed' error notice, got notice=%q err=%v", m.notice, m.noticeErr)
+	}
+
+	// mixed: one error, one empty (no error) → NOT a total failure → "No results."
+	m2 := New(&fakeSource{}, &fakeEngine{})
+	m2.searchGen = 1
+	m2.searching = true
+	m2.searchCh = make(chan source.SourceUpdate, 1)
+	m2, _ = update(m2, sourceUpdateMsg{gen: 1, up: source.SourceUpdate{Err: errors.New("boom"), Done: 1, Total: 2}})
+	m2, _ = update(m2, sourceUpdateMsg{gen: 1, up: source.SourceUpdate{Done: 2, Total: 2}}) // empty, no error
+	m2, _ = update(m2, searchClosedMsg{gen: 1})
+	if m2.noticeErr || m2.notice != "No results." {
+		t.Fatalf("partial failure with no results should be a plain 'No results.' notice, got notice=%q err=%v", m2.notice, m2.noticeErr)
+	}
+}
