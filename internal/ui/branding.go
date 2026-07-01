@@ -148,16 +148,19 @@ func (m Model) headerHeight() int {
 	return 6
 }
 
-// noticeText is the right-aligned toast: green ✓ for success, error ✗ for errors.
-func (m Model) noticeText() string {
-	if m.notice == "" {
+// noticeText is the right-aligned toast (green ✓ for success, error ✗ for
+// errors), truncated to fit maxWidth columns (glyph + space + message). Empty
+// when there's no notice or no room — callers pass the space actually available
+// so the toast is truncated to fit rather than dropped.
+func (m Model) noticeText(maxWidth int) string {
+	if m.notice == "" || maxWidth < 4 {
 		return ""
 	}
 	glyph, style := glyphDone, st.Notice
 	if m.noticeErr {
 		glyph, style = glyphErr, st.Bad
 	}
-	return style.Render(glyph + " " + truncate(m.notice, max(10, m.width/2)))
+	return style.Render(glyph + " " + truncate(m.notice, max(1, maxWidth-2)))
 }
 
 func (m Model) renderHeader() string {
@@ -165,7 +168,7 @@ func (m Model) renderHeader() string {
 	// narrower layout intact).
 	if m.headerHeight() == 1 {
 		left := st.Logo.Render(fishR + " shoal")
-		right := m.noticeText()
+		right := m.noticeText(max(10, m.width/2))
 		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 		if gap < 1 {
 			gap = 1
@@ -180,11 +183,14 @@ func (m Model) renderHeader() string {
 	lines := make([]string, 0, 6)
 	for r := 0; r < 5; r++ {
 		row := "  " + headerIconRow(iconCodes[r]) + "    " + st.Logo.Render(block[r])
-		if r == 0 { // pin the notice/toast to the top-right
-			if note := m.noticeText(); note != "" {
-				if gap := m.width - lipgloss.Width(row) - lipgloss.Width(note); gap >= 2 {
-					row += strings.Repeat(" ", gap) + note
+		if r == 0 { // pin the notice/toast to the top-right, truncated to fit
+			avail := m.width - lipgloss.Width(row) - 1 // reserve a 1-col gap
+			if note := m.noticeText(avail); note != "" {
+				gap := m.width - lipgloss.Width(row) - lipgloss.Width(note)
+				if gap < 1 {
+					gap = 1
 				}
+				row += strings.Repeat(" ", gap) + note
 			}
 		}
 		lines = append(lines, row)
