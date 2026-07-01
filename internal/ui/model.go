@@ -1,0 +1,587 @@
+// Package ui is shoal's fullscreen terminal interface, built with Bubble Tea.
+// It renders a calm, fullscreen layout with four panes — Search, Downloads,
+// Seeding and Settings — in one of two selectable themes (see theme.go).
+package ui
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+
+	"shoal/internal/config"
+	"shoal/internal/engine"
+	"shoal/internal/source"
+)
+
+const sidebarWidth = 20
+
+// filterCat maps a UI filter chip to an Internet Archive mediatype. The empty
+// mediatype ("All") matches everything.
+type filterCat struct {
+	Label     string
+	Mediatype string
+}
+
+var filterCats = []filterCat{
+	{"All", ""},
+	{"Games", "games"},
+	{"Movies", "movies"},
+	{"TV", "tv"},
+	{"Anime", "anime"},
+	{"Audio", "audio"},
+	{"Software", "software"},
+	{"Texts", "texts"},
+	{"Images", "image"},
+}
+
+// Model is the whole application state.
+type Model struct {
+	width, height int
+	ready         bool
+
+	section        section
+	editing        bool // search box focused?
+	editingSetting bool // a Settings text field focused?
+	showHelp       bool
+
+	input    textinput.Model // search box
+	setInput textinput.Model // settings inline editor
+	spin     spinner.Model
+	prog     progress.Model
+
+	src source.Source
+	eng engine.Engine
+	cfg config.Config
+
+	searching   bool
+	hasSearched bool
+	results     []source.Result
+	cursor      int
+	filter      int // index into filterCats
+
+	statuses  []engine.Status
+	setCursor int // index into settingItems()
+
+	notice      string
+	noticeErr   bool
+	noticeUntil time.Time
+	err         error
+}
+
+// New builds a model with default configuration (used by tests).
+func New(src source.Source, eng engine.Engine) Model {
+	return NewWithConfig(src, eng, config.Default())
+}
+
+// NewWithConfig builds the initial model, applying the persisted theme and
+// colour mode before any rendering happens.
+func NewWithConfig(src source.Source, eng engine.Engine, cfg config.Config) Model {
+	applyColorMode(cfg.ColorMode)
+	setPalette(paletteByName(cfg.Theme))
+
+	ti := textinput.New()
+	ti.Placeholder = "Search the Internet Archive…"
+	ti.Prompt = ""
+	ti.CharLimit = 120
+	ti.Focus()
+
+	si := textinput.New()
+	si.Prompt = ""
+	si.CharLimit = 200
+
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = st.SearchLabel
+
+	pr := progress.New(progress.WithSolidFill(activePalette.Accent.TrueColor))
+	pr.ShowPercentage = false
+
+	return Model{
+		section:  sectionSearch,
+		editing:  true,
+		input:    ti,
+		setInput: si,
+		spin:     sp,
+		prog:     pr,
+		src:      src,
+		eng:      eng,
+		cfg:      cfg,
+	}
+}
+
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(textinput.Blink, m.spin.Tick, tickCmd())
+}
+
+// --- messages & commands ---------------------------------------------------
+
+type searchDoneMsg struct {
+	results []source.Result
+	err     error
+}
+
+type addedMsg struct {
+	title string
+	err   error
+}
+
+type tickMsg time.Time
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(700*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+func searchCmd(src source.Source, query string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		res, err := src.Search(ctx, query)
+		return searchDoneMsg{results: res, err: err}
+	}
+}
+
+func addCmd(eng engine.Engine, r source.Result) tea.Cmd {
+	return func() tea.Msg {
+		// Prefer a .torrent URL; fall back to a magnet (curated/open-media
+		// results are magnet-only).
+		var err error
+		switch {
+		case r.TorrentURL != "":
+			err = eng.AddTorrentURL(r.TorrentURL, r.Title)
+		case r.Magnet != "":
+			err = eng.AddMagnet(r.Magnet)
+		default:
+			err = fmt.Errorf("%q has no torrent URL or magnet", r.Title)
+		}
+		return addedMsg{title: r.Title, err: err}
+	}
+}
+
+func addMagnetCmd(eng engine.Engine, magnet string) tea.Cmd {
+	return func() tea.Msg {
+		err := eng.AddMagnet(magnet)
+		return addedMsg{title: "magnet link", err: err}
+	}
+}
+
+// --- update ----------------------------------------------------------------
+
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.ready = true
+		m.input.Width = max(10, m.mainWidth()-2)
+		m.setInput.Width = max(10, m.mainWidth()-22)
+		return m, nil
+
+	case tea.KeyMsg:
+		return m.handleKey(msg)
+
+	case searchDoneMsg:
+		m.searching = false
+		if msg.err != nil {
+			m.err = msg.err
+			m.setError("Search failed: " + msg.err.Error())
+		} else {
+			m.results = msg.results
+			m.cursor = 0
+			m.err = nil
+			if len(msg.results) == 0 {
+				m.setNotice("No results.")
+			}
+		}
+		return m, nil
+
+	case addedMsg:
+		if msg.err != nil {
+			m.setError("Couldn't add: " + msg.err.Error())
+		} else {
+			m.setNotice("Added: " + truncate(msg.title, 48))
+			m.section = sectionDownloads
+		}
+		return m, nil
+
+	case tickMsg:
+		if m.eng != nil {
+			m.statuses = m.eng.Statuses()
+		}
+		if m.notice != "" && time.Now().After(m.noticeUntil) {
+			m.notice = ""
+			m.noticeErr = false
+		}
+		return m, tickCmd()
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
+	}
+
+	// Forward anything else (e.g. cursor blink) to whichever input is focused.
+	if m.editing {
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+	}
+	if m.editingSetting {
+		var cmd tea.Cmd
+		m.setInput, cmd = m.setInput.Update(msg)
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
+
+	if m.showHelp {
+		switch msg.String() {
+		case "?", "esc", "q":
+			m.showHelp = false
+		}
+		return m, nil
+	}
+
+	if m.editing {
+		return m.handleSearchEdit(msg)
+	}
+	if m.editingSetting {
+		return m.handleSettingEdit(msg)
+	}
+
+	// Command mode: single keys are actions.
+	switch msg.String() {
+	case "q":
+		return m, tea.Quit
+	case "?":
+		m.showHelp = true
+		return m, nil
+	case "/":
+		m.section = sectionSearch
+		m.editing = true
+		m.input.Focus()
+		return m, textinput.Blink
+	case "tab":
+		m.section = m.section.next()
+		return m, nil
+	case "up", "k":
+		m.moveUp()
+		return m, nil
+	case "down", "j":
+		m.moveDown()
+		return m, nil
+	case "left", "h":
+		m.moveLeft()
+		return m, nil
+	case "right", "l":
+		m.moveRight()
+		return m, nil
+	case "enter":
+		cmd := m.activate()
+		return m, cmd
+	case "d":
+		if m.section == sectionSearch {
+			fr := m.filteredResults()
+			if len(fr) > 0 && m.cursor < len(fr) {
+				return m, addCmd(m.eng, fr[m.cursor])
+			}
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m Model) handleSearchEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		q := strings.TrimSpace(m.input.Value())
+		m.editing = false
+		m.input.Blur()
+		if q == "" {
+			return m, nil
+		}
+		if mag := asMagnet(q); mag != "" {
+			return m, addMagnetCmd(m.eng, mag)
+		}
+		m.searching = true
+		m.hasSearched = true
+		m.section = sectionSearch
+		return m, searchCmd(m.src, q)
+	case "esc":
+		m.editing = false
+		m.input.Blur()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+func (m Model) handleSettingEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		items := settingItems()
+		if m.setCursor >= 0 && m.setCursor < len(items) {
+			items[m.setCursor].set(&m, strings.TrimSpace(m.setInput.Value()))
+			m.persist()
+		}
+		m.editingSetting = false
+		m.setInput.Blur()
+		return m, nil
+	case "esc":
+		m.editingSetting = false
+		m.setInput.Blur()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.setInput, cmd = m.setInput.Update(msg)
+	return m, cmd
+}
+
+// --- selection movement ----------------------------------------------------
+
+func (m *Model) moveUp() {
+	switch m.section {
+	case sectionSearch:
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case sectionSettings:
+		if m.setCursor > 0 {
+			m.setCursor--
+		}
+	}
+}
+
+func (m *Model) moveDown() {
+	switch m.section {
+	case sectionSearch:
+		if m.cursor < len(m.filteredResults())-1 {
+			m.cursor++
+		}
+	case sectionSettings:
+		if m.setCursor < len(settingItems())-1 {
+			m.setCursor++
+		}
+	}
+}
+
+func (m *Model) moveLeft() {
+	switch m.section {
+	case sectionSearch:
+		if m.filter > 0 {
+			m.filter--
+			m.cursor = 0
+		}
+	case sectionSettings:
+		m.settingsChange(-1)
+	}
+}
+
+func (m *Model) moveRight() {
+	switch m.section {
+	case sectionSearch:
+		if m.filter < len(filterCats)-1 {
+			m.filter++
+			m.cursor = 0
+		}
+	case sectionSettings:
+		m.settingsChange(1)
+	}
+}
+
+// activate handles enter in command mode: download in Search, edit/cycle in
+// Settings.
+func (m *Model) activate() tea.Cmd {
+	switch m.section {
+	case sectionSearch:
+		fr := m.filteredResults()
+		if len(fr) > 0 && m.cursor < len(fr) {
+			return addCmd(m.eng, fr[m.cursor])
+		}
+	case sectionSettings:
+		items := settingItems()
+		if m.setCursor < 0 || m.setCursor >= len(items) {
+			return nil
+		}
+		it := items[m.setCursor]
+		if it.kind == kindEnum {
+			m.settingsChange(1)
+			return nil
+		}
+		// Text setting: open the inline editor seeded with the current value.
+		m.editingSetting = true
+		m.setInput.SetValue(it.get(m))
+		m.setInput.CursorEnd()
+		m.setInput.Focus()
+		return textinput.Blink
+	}
+	return nil
+}
+
+// --- settings --------------------------------------------------------------
+
+type setKind int
+
+const (
+	kindEnum setKind = iota
+	kindText
+)
+
+type setItem struct {
+	group   string
+	label   string
+	kind    setKind
+	options []string
+	get     func(m *Model) string
+	set     func(m *Model, v string)
+}
+
+// settingItems is the ordered, navigable list of Settings rows (group headers
+// are a render concern). Editing a value applies its side effect immediately
+// and the change is persisted by the caller.
+func settingItems() []setItem {
+	return []setItem{
+		{group: "APPEARANCE", label: "Theme", kind: kindEnum, options: []string{"Twilight", "Tide"},
+			get: func(m *Model) string { return m.cfg.Theme },
+			set: func(m *Model, v string) { m.cfg.Theme = v; m.applyTheme() }},
+		{group: "APPEARANCE", label: "Color mode", kind: kindEnum, options: []string{"auto", "truecolor", "256", "off"},
+			get: func(m *Model) string { return m.cfg.ColorMode },
+			set: func(m *Model, v string) { m.cfg.ColorMode = v; applyColorMode(v) }},
+		{group: "DOWNLOADS", label: "Save to", kind: kindText,
+			get: func(m *Model) string { return m.cfg.DataDir },
+			set: func(m *Model, v string) {
+				if v != "" {
+					m.cfg.DataDir = v
+				}
+			}},
+		{group: "DOWNLOADS", label: "When done", kind: kindEnum, options: []string{"keep seeding", "stop"},
+			get: func(m *Model) string {
+				if m.cfg.Seed {
+					return "keep seeding"
+				}
+				return "stop"
+			},
+			set: func(m *Model, v string) { m.cfg.Seed = v == "keep seeding" }},
+		{group: "DOWNLOADS", label: "Seed ratio", kind: kindText,
+			get: func(m *Model) string { return fmt.Sprintf("%.1f", m.cfg.SeedRatio) },
+			set: func(m *Model, v string) {
+				if f, err := strconv.ParseFloat(v, 64); err == nil {
+					m.cfg.SeedRatio = f
+				}
+			}},
+		{group: "DOWNLOADS", label: "Max peers", kind: kindText,
+			get: func(m *Model) string { return strconv.Itoa(m.cfg.MaxPeers) },
+			set: func(m *Model, v string) {
+				if n, err := strconv.Atoi(v); err == nil {
+					m.cfg.MaxPeers = n
+				}
+			}},
+		{group: "DOWNLOADS", label: "Listen port", kind: kindText,
+			get: func(m *Model) string { return strconv.Itoa(m.cfg.ListenPort) },
+			set: func(m *Model, v string) {
+				if n, err := strconv.Atoi(v); err == nil {
+					m.cfg.ListenPort = n
+				}
+			}},
+	}
+}
+
+func (m *Model) settingsChange(dir int) {
+	items := settingItems()
+	if m.setCursor < 0 || m.setCursor >= len(items) {
+		return
+	}
+	it := items[m.setCursor]
+	if it.kind != kindEnum || len(it.options) == 0 {
+		return
+	}
+	cur := it.get(m)
+	idx := 0
+	for i, o := range it.options {
+		if o == cur {
+			idx = i
+			break
+		}
+	}
+	idx = (idx + dir + len(it.options)) % len(it.options)
+	it.set(m, it.options[idx])
+	m.persist()
+}
+
+// applyTheme swaps the active palette and rebuilds the colour-bearing widgets
+// (spinner, progress bar) so a theme switch takes effect immediately.
+func (m *Model) applyTheme() {
+	setPalette(paletteByName(m.cfg.Theme))
+	m.spin.Style = st.SearchLabel
+	pr := progress.New(progress.WithSolidFill(activePalette.Accent.TrueColor))
+	pr.ShowPercentage = false
+	m.prog = pr
+}
+
+func (m *Model) persist() { _ = m.cfg.Save() }
+
+// --- derived views over state ----------------------------------------------
+
+// filteredResults applies the active media filter to the search results.
+func (m Model) filteredResults() []source.Result {
+	cat := filterCats[m.filter].Mediatype
+	if cat == "" {
+		return m.results
+	}
+	out := make([]source.Result, 0, len(m.results))
+	for _, r := range m.results {
+		if strings.EqualFold(r.Category, cat) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func (m Model) downloading() []engine.Status {
+	out := make([]engine.Status, 0, len(m.statuses))
+	for _, s := range m.statuses {
+		if !s.Done {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func (m Model) seeding() []engine.Status {
+	out := make([]engine.Status, 0, len(m.statuses))
+	for _, s := range m.statuses {
+		if s.Done {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// mainWidth is the width of the content pane (everything right of the sidebar).
+func (m Model) mainWidth() int {
+	return max(20, m.width-sidebarWidth-1)
+}
+
+func (m *Model) setNotice(s string) {
+	m.notice = s
+	m.noticeErr = false
+	m.noticeUntil = time.Now().Add(4 * time.Second)
+}
+
+func (m *Model) setError(s string) {
+	m.notice = s
+	m.noticeErr = true
+	m.noticeUntil = time.Now().Add(6 * time.Second)
+}

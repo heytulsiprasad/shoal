@@ -1,0 +1,4 @@
+shoal
+*.test
+/private
+.superpowers/

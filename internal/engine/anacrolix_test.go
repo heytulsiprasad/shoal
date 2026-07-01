@@ -1,0 +1,166 @@
+package engine
+
+import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	atbencode "github.com/anacrolix/torrent/bencode"
+	atmetainfo "github.com/anacrolix/torrent/metainfo"
+)
+
+// buildTorrentBytes builds a real, self-contained .torrent (no trackers) for a
+// temp file, entirely offline.
+func buildTorrentBytes(t *testing.T, content []byte) []byte {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "blob.bin")
+	if err := os.WriteFile(p, content, 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	info := atmetainfo.Info{PieceLength: 16384}
+	if err := info.BuildFromFilePath(p); err != nil {
+		t.Fatalf("BuildFromFilePath: %v", err)
+	}
+	ib, err := atbencode.Marshal(info)
+	if err != nil {
+		t.Fatalf("marshal info: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := (&atmetainfo.MetaInfo{InfoBytes: ib}).Write(&buf); err != nil {
+		t.Fatalf("write metainfo: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func newEngine(t *testing.T) *Anacrolix {
+	t.Helper()
+	eng, err := NewAnacrolix(Config{DataDir: t.TempDir(), Seed: true})
+	if err != nil {
+		t.Skipf("cannot start torrent client in this environment: %v", err)
+	}
+	t.Cleanup(func() { eng.Close() })
+	return eng
+}
+
+func TestAnacrolixStartsEmpty(t *testing.T) {
+	eng := newEngine(t)
+	if got := eng.Statuses(); len(got) != 0 {
+		t.Errorf("fresh engine Statuses() = %d entries, want 0", len(got))
+	}
+}
+
+func TestAnacrolixAddTorrentURLErrors(t *testing.T) {
+	eng := newEngine(t)
+
+	notFound := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(notFound.Close)
+	if err := eng.AddTorrentURL(notFound.URL, "x"); err == nil {
+		t.Error("AddTorrentURL expected error on 404")
+	}
+
+	notTorrent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("definitely not a torrent"))
+	}))
+	t.Cleanup(notTorrent.Close)
+	if err := eng.AddTorrentURL(notTorrent.URL, "x"); err == nil {
+		t.Error("AddTorrentURL expected error on non-torrent body")
+	}
+}
+
+func TestEnforceSeedRatioLeavesUnderRatioTorrent(t *testing.T) {
+	eng, err := NewAnacrolix(Config{DataDir: t.TempDir(), Seed: true, SeedRatio: 2.0})
+	if err != nil {
+		t.Skipf("cannot start torrent client in this environment: %v", err)
+	}
+	t.Cleanup(func() { eng.Close() })
+
+	torrent := buildTorrentBytes(t, bytes.Repeat([]byte("shoal"), 8000))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(torrent)
+	}))
+	t.Cleanup(srv.Close)
+	if err := eng.AddTorrentURL(srv.URL, "ratio-test"); err != nil {
+		t.Fatalf("AddTorrentURL: %v", err)
+	}
+
+	// Wait for metadata, then run one enforcement pass. Nothing has been uploaded
+	// (no peers), so a 2.0 ratio is not met and the torrent must survive untouched.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && (len(eng.Statuses()) == 0 || eng.Statuses()[0].TotalBytes == 0) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	eng.enforceSeedRatio() // must not panic and must not drop the torrent
+	if len(eng.Statuses()) != 1 {
+		t.Errorf("after enforcement, Statuses() = %d, want 1", len(eng.Statuses()))
+	}
+}
+
+func TestAnacrolixSeedRatioLoopShutsDown(t *testing.T) {
+	// With a ratio set, NewAnacrolix starts the enforcement goroutine; Close must
+	// stop it cleanly (no panic, no double-close, returns promptly).
+	eng, err := NewAnacrolix(Config{DataDir: t.TempDir(), Seed: true, SeedRatio: 2.0})
+	if err != nil {
+		t.Skipf("cannot start torrent client in this environment: %v", err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+	eng.Close() // second Close must not panic (closeOnce guards the done channel)
+}
+
+func TestAnacrolixAddMagnetInvalid(t *testing.T) {
+	eng := newEngine(t)
+	if err := eng.AddMagnet("not-a-magnet-link"); err == nil {
+		t.Error("AddMagnet expected error on invalid magnet")
+	}
+}
+
+func TestAnacrolixAddTorrentURLTracksStatus(t *testing.T) {
+	eng := newEngine(t)
+	content := bytes.Repeat([]byte("shoal"), 8000) // 40000 bytes
+	torrent := buildTorrentBytes(t, content)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(torrent)
+	}))
+	t.Cleanup(srv.Close)
+
+	if err := eng.AddTorrentURL(srv.URL, "My Display Name"); err != nil {
+		t.Fatalf("AddTorrentURL: %v", err)
+	}
+
+	// Metadata is embedded, so the status should resolve quickly. Poll briefly.
+	var st Status
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		all := eng.Statuses()
+		if len(all) == 1 && all[0].TotalBytes > 0 {
+			st = all[0]
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if st.TotalBytes != int64(len(content)) {
+		t.Fatalf("TotalBytes = %d, want %d", st.TotalBytes, len(content))
+	}
+	if st.Name != "My Display Name" {
+		t.Errorf("Name = %q, want My Display Name", st.Name)
+	}
+	if st.Done {
+		t.Error("Done = true, want false (no peers, nothing downloaded)")
+	}
+	if st.Percent() != 0 {
+		t.Errorf("Percent() = %v, want 0", st.Percent())
+	}
+	if st.AddedAt.IsZero() {
+		t.Error("AddedAt not set")
+	}
+}
