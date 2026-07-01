@@ -18,6 +18,7 @@ import (
 
 	"shoal/internal/config"
 	"shoal/internal/engine"
+	"shoal/internal/history"
 	"shoal/internal/source"
 )
 
@@ -88,6 +89,7 @@ type Model struct {
 	dlSpeed   map[string]int64 // download byte/sec per Status.Name, sampled between ticks
 	ulSpeed   map[string]int64 // upload (seeding) byte/sec per Status.Name
 	lastTick  time.Time        // timestamp of the previous tick, for the rate delta
+	history   history.Store    // completed-download record; injected via WithHistory
 	setCursor int              // index into settingItems()
 
 	dlCursor      int // selection in the Downloads pane
@@ -140,6 +142,13 @@ func NewWithConfig(src source.Source, eng engine.Engine, cfg config.Config) Mode
 		cfg:      cfg,
 		sortDesc: true,
 	}
+}
+
+// WithHistory attaches a loaded history store (main wires history.Load(); tests
+// leave it empty so Save is a no-op).
+func (m Model) WithHistory(h history.Store) Model {
+	m.history = h
+	return m
 }
 
 func (m Model) Init() tea.Cmd {
@@ -262,6 +271,24 @@ func removeCmd(eng engine.Engine, infoHash, name string, deleteData bool) tea.Cm
 	}
 }
 
+// newlyCompleted returns torrents that flipped Done false→true (or first appeared
+// already Done) between two snapshots, keyed by InfoHash.
+func newlyCompleted(prev, next []engine.Status) []engine.Status {
+	was := make(map[string]bool, len(prev))
+	for _, s := range prev {
+		if s.Done {
+			was[s.InfoHash] = true
+		}
+	}
+	var out []engine.Status
+	for _, s := range next {
+		if s.Done && s.InfoHash != "" && !was[s.InfoHash] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // --- update ----------------------------------------------------------------
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -354,8 +381,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			dt := now.Sub(m.lastTick)
 			m.dlSpeed = computeRates(m.statuses, next, dt, func(s engine.Status) int64 { return s.CompletedBytes })
 			m.ulSpeed = computeRates(m.statuses, next, dt, func(s engine.Status) int64 { return s.Uploaded })
+			for _, s := range newlyCompleted(m.statuses, next) {
+				m.history.Append(history.Entry{InfoHash: s.InfoHash, Name: s.Name, Size: s.TotalBytes, CompletedAt: now})
+			}
 			m.statuses = next
 			m.lastTick = now
+			if n := len(m.downloading()); m.dlCursor >= n {
+				m.dlCursor = max(0, n-1)
+			}
 		}
 		if m.notice != "" && time.Now().After(m.noticeUntil) {
 			m.notice = ""

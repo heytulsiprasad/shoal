@@ -665,6 +665,31 @@ func TestComputeRates(t *testing.T) {
 	}
 }
 
+func TestNewlyCompleted(t *testing.T) {
+	prev := []engine.Status{{InfoHash: "a", Done: false}, {InfoHash: "b", Done: true}}
+	next := []engine.Status{{InfoHash: "a", Done: true}, {InfoHash: "b", Done: true}}
+	got := newlyCompleted(prev, next)
+	if len(got) != 1 || got[0].InfoHash != "a" {
+		t.Fatalf("newlyCompleted = %+v, want just a", got)
+	}
+}
+
+func TestTickRecordsHistory(t *testing.T) {
+	eng := &fakeEngine{statuses: []engine.Status{{Name: "Movie", InfoHash: "hh", TotalBytes: 2048, CompletedBytes: 0}}}
+	m := ready(New(&fakeSource{}, eng))
+	t0 := time.Unix(1_000_000, 0)
+	m, _ = update(m, tickMsg(t0)) // not done yet → no history
+	eng.statuses = []engine.Status{{Name: "Movie", InfoHash: "hh", TotalBytes: 2048, CompletedBytes: 2048, Done: true}}
+	m, _ = update(m, tickMsg(t0.Add(time.Second))) // completes → recorded
+	if len(m.history.Entries) != 1 || m.history.Entries[0].InfoHash != "hh" {
+		t.Fatalf("history = %+v, want one entry for hh", m.history.Entries)
+	}
+	m, _ = update(m, tickMsg(t0.Add(2*time.Second))) // still done → no dup
+	if len(m.history.Entries) != 1 {
+		t.Fatalf("history duplicated: %+v", m.history.Entries)
+	}
+}
+
 func TestTickComputesTransferSpeeds(t *testing.T) {
 	eng := &fakeEngine{statuses: []engine.Status{{Name: "A", TotalBytes: 100_000_000, CompletedBytes: 0, Uploaded: 0}}}
 	m := ready(New(&fakeSource{}, eng))

@@ -1,4 +1,4 @@
-shoal
+/shoal
 *.test
 /private
 .superpowers/
