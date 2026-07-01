@@ -233,6 +233,20 @@ func TestRenderDownloadsShowsSpeed(t *testing.T) {
 	}
 }
 
+func TestRenderDownloadsCancelPrompt(t *testing.T) {
+	m := ready(New(&fakeSource{}, &fakeEngine{}))
+	m.section = sectionDownloads
+	m.statuses = []engine.Status{{Name: "Movie", InfoHash: "h", TotalBytes: 100, CompletedBytes: 10}}
+	m.cancelConfirm = true
+	m.cancelTarget = m.statuses[0]
+	v := m.View()
+	for _, want := range []string{"Cancel", "keep files", "delete files"} {
+		if !strings.Contains(v, want) {
+			t.Fatalf("cancel prompt missing %q:\n%s", want, v)
+		}
+	}
+}
+
 func TestRenderSeedingShowsSpeed(t *testing.T) {
 	m := ready(New(&fakeSource{}, &fakeEngine{}))
 	m.section = sectionSeeding
