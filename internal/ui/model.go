@@ -18,6 +18,7 @@ import (
 
 	"shoal/internal/config"
 	"shoal/internal/engine"
+	"shoal/internal/history"
 	"shoal/internal/source"
 )
 
@@ -88,7 +89,12 @@ type Model struct {
 	dlSpeed   map[string]int64 // download byte/sec per Status.Name, sampled between ticks
 	ulSpeed   map[string]int64 // upload (seeding) byte/sec per Status.Name
 	lastTick  time.Time        // timestamp of the previous tick, for the rate delta
+	history   history.Store    // completed-download record; injected via WithHistory
 	setCursor int              // index into settingItems()
+
+	dlCursor      int // selection in the Downloads pane
+	cancelConfirm bool
+	cancelTarget  engine.Status
 
 	notice      string
 	noticeErr   bool
@@ -138,6 +144,13 @@ func NewWithConfig(src source.Source, eng engine.Engine, cfg config.Config) Mode
 	}
 }
 
+// WithHistory attaches a loaded history store (main wires history.Load(); tests
+// leave it empty so Save is a no-op).
+func (m Model) WithHistory(h history.Store) Model {
+	m.history = h
+	return m
+}
+
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(textinput.Blink, m.spin.Tick, tickCmd())
 }
@@ -159,6 +172,12 @@ type searchClosedMsg struct{ gen int }
 type addedMsg struct {
 	title string
 	err   error
+}
+
+type removedMsg struct {
+	name    string
+	deleted bool
+	err     error
 }
 
 type tickMsg time.Time
@@ -245,6 +264,31 @@ func addMagnetCmd(eng engine.Engine, magnet string) tea.Cmd {
 	}
 }
 
+func removeCmd(eng engine.Engine, infoHash, name string, deleteData bool) tea.Cmd {
+	return func() tea.Msg {
+		err := eng.Remove(infoHash, deleteData)
+		return removedMsg{name: name, deleted: deleteData, err: err}
+	}
+}
+
+// newlyCompleted returns torrents that flipped Done false→true (or first appeared
+// already Done) between two snapshots, keyed by InfoHash.
+func newlyCompleted(prev, next []engine.Status) []engine.Status {
+	was := make(map[string]bool, len(prev))
+	for _, s := range prev {
+		if s.Done {
+			was[s.InfoHash] = true
+		}
+	}
+	var out []engine.Status
+	for _, s := range next {
+		if s.Done && s.InfoHash != "" && !was[s.InfoHash] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // --- update ----------------------------------------------------------------
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -316,6 +360,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case removedMsg:
+		switch {
+		case msg.err != nil:
+			m.setError("Couldn't remove: " + msg.err.Error())
+		case msg.deleted:
+			m.setNotice("Deleted: " + truncate(msg.name, 48))
+		default:
+			m.setNotice("Cancelled: " + truncate(msg.name, 48))
+		}
+		if n := len(m.downloading()); m.dlCursor >= n {
+			m.dlCursor = max(0, n-1)
+		}
+		return m, nil
+
 	case tickMsg:
 		if m.eng != nil {
 			now := time.Time(msg)
@@ -323,8 +381,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			dt := now.Sub(m.lastTick)
 			m.dlSpeed = computeRates(m.statuses, next, dt, func(s engine.Status) int64 { return s.CompletedBytes })
 			m.ulSpeed = computeRates(m.statuses, next, dt, func(s engine.Status) int64 { return s.Uploaded })
+			for _, s := range newlyCompleted(m.statuses, next) {
+				m.history.Append(history.Entry{InfoHash: s.InfoHash, Name: s.Name, Size: s.TotalBytes, CompletedAt: now})
+			}
 			m.statuses = next
 			m.lastTick = now
+			if n := len(m.downloading()); m.dlCursor >= n {
+				m.dlCursor = max(0, n-1)
+			}
+			// If the torrent we're asking to cancel finished (or vanished) while the
+			// confirm prompt was open, drop the prompt — it only applies to in-progress downloads.
+			if m.cancelConfirm {
+				stillDownloading := false
+				for _, s := range m.downloading() {
+					if s.InfoHash == m.cancelTarget.InfoHash {
+						stillDownloading = true
+						break
+					}
+				}
+				if !stillDownloading {
+					m.cancelConfirm = false
+				}
+			}
 		}
 		if m.notice != "" && time.Now().After(m.noticeUntil) {
 			m.notice = ""
@@ -395,6 +473,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSortKey(msg)
 	}
 
+	if m.cancelConfirm {
+		return m.handleCancelKey(msg)
+	}
+
 	// Command mode: single keys are actions.
 	switch msg.String() {
 	case "q":
@@ -430,6 +512,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			fr := m.filteredResults()
 			if len(fr) > 0 && m.cursor < len(fr) {
 				return m, addCmd(m.eng, fr[m.cursor])
+			}
+		}
+		return m, nil
+	case "x":
+		if m.section == sectionDownloads {
+			ds := m.downloading()
+			if len(ds) > 0 && m.dlCursor < len(ds) {
+				m.cancelConfirm = true
+				m.cancelTarget = ds[m.dlCursor]
 			}
 		}
 		return m, nil
@@ -469,6 +560,24 @@ func (m Model) handleSortKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.sortDesc = true
 		applySort(m.results, m.sortField, m.sortDesc)
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// handleCancelKey handles input while the cancel-download confirm modal is
+// active: k keeps partial files, d deletes them, esc/n aborts.
+func (m Model) handleCancelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "k":
+		m.cancelConfirm = false
+		return m, removeCmd(m.eng, m.cancelTarget.InfoHash, m.cancelTarget.Name, false)
+	case "d":
+		m.cancelConfirm = false
+		return m, removeCmd(m.eng, m.cancelTarget.InfoHash, m.cancelTarget.Name, true)
+	case "esc", "n":
+		m.cancelConfirm = false
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	}
@@ -533,6 +642,10 @@ func (m *Model) moveUp() {
 		if m.setCursor > 0 {
 			m.setCursor--
 		}
+	case sectionDownloads:
+		if m.dlCursor > 0 {
+			m.dlCursor--
+		}
 	}
 }
 
@@ -545,6 +658,10 @@ func (m *Model) moveDown() {
 	case sectionSettings:
 		if m.setCursor < len(settingItems())-1 {
 			m.setCursor++
+		}
+	case sectionDownloads:
+		if m.dlCursor < len(m.downloading())-1 {
+			m.dlCursor++
 		}
 	}
 }

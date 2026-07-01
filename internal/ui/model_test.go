@@ -32,6 +32,10 @@ type fakeEngine struct {
 	addedURL    string
 	addedName   string
 	addedMagnet string
+
+	removedHash   string
+	removedDelete bool
+	removeErr     error
 }
 
 func (e *fakeEngine) AddTorrentURL(url, name string) error {
@@ -43,7 +47,12 @@ func (e *fakeEngine) AddMagnet(magnet string) error {
 	return e.magErr
 }
 func (e *fakeEngine) Statuses() []engine.Status { return e.statuses }
-func (e *fakeEngine) Close() error              { return nil }
+func (e *fakeEngine) Remove(infoHash string, deleteData bool) error {
+	e.removedHash = infoHash
+	e.removedDelete = deleteData
+	return e.removeErr
+}
+func (e *fakeEngine) Close() error { return nil }
 
 // --- helpers ---------------------------------------------------------------
 
@@ -362,6 +371,92 @@ func TestDownloadsAndSeedingSplit(t *testing.T) {
 	}
 }
 
+func TestDownloadsCursorMoves(t *testing.T) {
+	eng := &fakeEngine{statuses: []engine.Status{
+		{Name: "A", InfoHash: "aa", TotalBytes: 100, CompletedBytes: 10},
+		{Name: "B", InfoHash: "bb", TotalBytes: 100, CompletedBytes: 20},
+	}}
+	m := ready(New(&fakeSource{}, eng))
+	m, _ = update(m, tickMsg(time.Now())) // load statuses
+	m.editing = false
+	m.section = sectionDownloads
+	m, _ = update(m, key("down"))
+	if m.dlCursor != 1 {
+		t.Fatalf("dlCursor after down = %d, want 1", m.dlCursor)
+	}
+	m, _ = update(m, key("up"))
+	if m.dlCursor != 0 {
+		t.Fatalf("dlCursor after up = %d, want 0", m.dlCursor)
+	}
+}
+
+func TestCancelConfirmDeletePath(t *testing.T) {
+	eng := &fakeEngine{statuses: []engine.Status{{Name: "Movie", InfoHash: "abc123", TotalBytes: 100, CompletedBytes: 10}}}
+	m := ready(New(&fakeSource{}, eng))
+	m, _ = update(m, tickMsg(time.Now()))
+	m.editing = false
+	m.section = sectionDownloads
+	m.dlCursor = 0
+
+	m, _ = update(m, key("x")) // open confirm
+	if !m.cancelConfirm || m.cancelTarget.InfoHash != "abc123" {
+		t.Fatalf("x did not open confirm: confirm=%v target=%+v", m.cancelConfirm, m.cancelTarget)
+	}
+	m, cmd := update(m, key("d")) // cancel + delete files
+	if m.cancelConfirm {
+		t.Fatalf("d should close the confirm")
+	}
+	if cmd == nil {
+		t.Fatalf("d should return a remove command")
+	}
+	cmd()
+	if eng.removedHash != "abc123" || !eng.removedDelete {
+		t.Fatalf("remove got hash=%q delete=%v, want abc123/true", eng.removedHash, eng.removedDelete)
+	}
+}
+
+func TestCancelKeepAndAbort(t *testing.T) {
+	eng := &fakeEngine{statuses: []engine.Status{{Name: "Movie", InfoHash: "h1", TotalBytes: 100, CompletedBytes: 10}}}
+	m := ready(New(&fakeSource{}, eng))
+	m, _ = update(m, tickMsg(time.Now()))
+	m.editing = false
+	m.section = sectionDownloads
+
+	m, _ = update(m, key("x"))
+	m, cmd := update(m, key("esc")) // abort
+	if m.cancelConfirm || cmd != nil {
+		t.Fatalf("esc should abort with no command")
+	}
+	if eng.removedHash != "" {
+		t.Fatalf("esc must not call Remove, got %q", eng.removedHash)
+	}
+
+	m, _ = update(m, key("x"))
+	m, cmd = update(m, key("k")) // keep files
+	cmd()
+	if eng.removedHash != "h1" || eng.removedDelete {
+		t.Fatalf("k should Remove(keep): hash=%q delete=%v", eng.removedHash, eng.removedDelete)
+	}
+}
+
+func TestCancelConfirmClearsWhenTargetCompletes(t *testing.T) {
+	eng := &fakeEngine{statuses: []engine.Status{{Name: "Movie", InfoHash: "h1", TotalBytes: 100, CompletedBytes: 10}}}
+	m := ready(New(&fakeSource{}, eng))
+	m, _ = update(m, tickMsg(time.Now()))
+	m.editing = false
+	m.section = sectionDownloads
+	m, _ = update(m, key("x"))
+	if !m.cancelConfirm {
+		t.Fatal("x should open the cancel confirm")
+	}
+	// the download completes before the user confirms
+	eng.statuses = []engine.Status{{Name: "Movie", InfoHash: "h1", TotalBytes: 100, CompletedBytes: 100, Done: true}}
+	m, _ = update(m, tickMsg(time.Now().Add(time.Second)))
+	if m.cancelConfirm {
+		t.Fatal("cancel confirm should clear once the target is no longer downloading")
+	}
+}
+
 func TestTickPollsEngineAndReschedules(t *testing.T) {
 	eng := &fakeEngine{statuses: []engine.Status{{Name: "X", TotalBytes: 100, CompletedBytes: 50}}}
 	m := ready(New(&fakeSource{}, eng))
@@ -585,6 +680,31 @@ func TestComputeRates(t *testing.T) {
 	back := []engine.Status{{Name: "A", CompletedBytes: 500}}
 	if s := computeRates(prev, back, time.Second, completed); len(s) != 0 {
 		t.Fatalf("negative delta → no rate, got %v", s)
+	}
+}
+
+func TestNewlyCompleted(t *testing.T) {
+	prev := []engine.Status{{InfoHash: "a", Done: false}, {InfoHash: "b", Done: true}}
+	next := []engine.Status{{InfoHash: "a", Done: true}, {InfoHash: "b", Done: true}}
+	got := newlyCompleted(prev, next)
+	if len(got) != 1 || got[0].InfoHash != "a" {
+		t.Fatalf("newlyCompleted = %+v, want just a", got)
+	}
+}
+
+func TestTickRecordsHistory(t *testing.T) {
+	eng := &fakeEngine{statuses: []engine.Status{{Name: "Movie", InfoHash: "hh", TotalBytes: 2048, CompletedBytes: 0}}}
+	m := ready(New(&fakeSource{}, eng))
+	t0 := time.Unix(1_000_000, 0)
+	m, _ = update(m, tickMsg(t0)) // not done yet → no history
+	eng.statuses = []engine.Status{{Name: "Movie", InfoHash: "hh", TotalBytes: 2048, CompletedBytes: 2048, Done: true}}
+	m, _ = update(m, tickMsg(t0.Add(time.Second))) // completes → recorded
+	if len(m.history.Entries) != 1 || m.history.Entries[0].InfoHash != "hh" {
+		t.Fatalf("history = %+v, want one entry for hh", m.history.Entries)
+	}
+	m, _ = update(m, tickMsg(t0.Add(2*time.Second))) // still done → no dup
+	if len(m.history.Entries) != 1 {
+		t.Fatalf("history duplicated: %+v", m.history.Entries)
 	}
 }
 

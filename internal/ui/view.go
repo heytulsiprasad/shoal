@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"shoal/internal/history"
 	"shoal/internal/source"
 )
 
@@ -328,10 +329,22 @@ func (m Model) renderDownloads(w, h int) string {
 	barWidth := max(10, min(48, w-24))
 
 	var b strings.Builder
+	if m.cancelConfirm {
+		b.WriteString("  " + st.Bad.Render("Cancel ") +
+			st.Row.Render("\""+truncate(m.cancelTarget.Name, max(8, w-32))+"\"") + st.Meta.Render("?   ") +
+			st.Key.Render("k") + st.Meta.Render(" keep files   ·   ") +
+			st.Key.Render("d") + st.Meta.Render(" delete files   ·   ") +
+			st.Key.Render("esc") + st.Meta.Render(" back") + "\n\n")
+	}
+
 	shown := min(len(ds), visible)
 	for i := 0; i < shown; i++ {
 		s := ds[i]
-		b.WriteString(st.Accent.Render(glyphDown+" ") + st.Row.Render(truncate(s.Name, max(4, w-4))) + "\n")
+		head, nameStyle := st.Accent.Render(glyphDown+" "), st.Row
+		if i == m.dlCursor {
+			head, nameStyle = st.Accent.Render(glyphCursor+" "), st.RowSel
+		}
+		b.WriteString(head + nameStyle.Render(truncate(s.Name, max(4, w-4))) + "\n")
 
 		p := m.prog
 		p.Width = barWidth
@@ -356,7 +369,18 @@ func (m Model) renderDownloads(w, h int) string {
 
 func (m Model) renderSeeding(w, h int) string {
 	ss := m.seeding()
-	if len(ss) == 0 {
+	active := make(map[string]bool, len(ss))
+	for _, s := range ss {
+		active[s.InfoHash] = true
+	}
+	var hist []history.Entry
+	for _, e := range m.history.Entries {
+		if !active[e.InfoHash] {
+			hist = append(hist, e)
+		}
+	}
+
+	if len(ss) == 0 && len(hist) == 0 {
 		return "  " + st.Meta.Render("Nothing seeding yet. Completed downloads keep sharing here.")
 	}
 
@@ -379,6 +403,22 @@ func (m Model) renderSeeding(w, h int) string {
 		b.WriteString("  " + st.Good.Render(glyphDone+" complete") + st.Meta.Render(truncate(detail, max(4, w-14))) + "\n")
 		if i < shown-1 {
 			b.WriteString("\n")
+		}
+	}
+
+	if len(hist) > 0 {
+		if len(ss) > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(st.SectionHead.Render("HISTORY") + "\n")
+		const histMax = 50
+		for i, e := range hist {
+			if i >= histMax {
+				b.WriteString("  " + st.Faint.Render(fmt.Sprintf("%s %d more %s", glyphMore, len(hist)-histMax, glyphDown)) + "\n")
+				break
+			}
+			meta := "  ·  " + sizeOrDash(e.Size) + "  ·  " + relTime(e.CompletedAt.Unix())
+			b.WriteString("  " + st.Good.Render(glyphDone+" ") + st.Row.Render(truncate(e.Name, max(4, w-24))) + st.Meta.Render(meta) + "\n")
 		}
 	}
 	return b.String()
@@ -459,6 +499,10 @@ func (m Model) renderFooter() string {
 		parts = []string{hint("d", "download"), hint("y", "copy magnet"), hint("esc", "back")}
 	case m.sortMode:
 		parts = []string{hint("←→", "column"), hint("↑↓", "direction"), hint("esc", "done")}
+	case m.cancelConfirm:
+		parts = []string{hint("k", "keep files"), hint("d", "delete files"), hint("esc", "back")}
+	case m.section == sectionDownloads:
+		parts = []string{hint("↑↓", "move"), hint("x", "cancel"), hint("tab", "panes"), hint("?", "help"), hint("q", "quit")}
 	case m.section == sectionSearch:
 		parts = []string{
 			hint("/", "search"), hint("↑↓", "move"), hint("←→", "filter"),
@@ -484,6 +528,7 @@ func (m Model) helpView() string {
 		{"↑ ↓ / k j", "move the selection"},
 		{"← → / h l", "switch the media filter · change a setting"},
 		{"d", "download the selected result"},
+		{"x", "cancel the selected download (keep or delete files)"},
 		{"S", "sort results (←→ column · ↑↓ direction)"},
 		{"y", "copy magnet (in details)"},
 		{"tab", "cycle Search · Downloads · Seeding · Settings"},

@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,8 +20,9 @@ import (
 // BitTorrent stack (DHT, magnet/BEP-9 metadata, UDP trackers, web seeds,
 // seeding).
 type Anacrolix struct {
-	client *torrent.Client
-	http   *http.Client
+	client  *torrent.Client
+	http    *http.Client
+	dataDir string
 
 	seedRatio float64
 	done      chan struct{}
@@ -51,6 +55,7 @@ func NewAnacrolix(c Config) (*Anacrolix, error) {
 	a := &Anacrolix{
 		client:    client,
 		http:      &http.Client{Timeout: 30 * time.Second},
+		dataDir:   c.DataDir,
 		seedRatio: c.SeedRatio,
 		done:      make(chan struct{}),
 		addedAt:   map[metainfo.Hash]time.Time{},
@@ -185,6 +190,7 @@ func (a *Anacrolix) Statuses() []Status {
 		stats := t.Stats()
 		out = append(out, Status{
 			Name:           name,
+			InfoHash:       h.HexString(),
 			TotalBytes:     total,
 			CompletedBytes: completed,
 			// BytesWrittenData is the uploaded-payload counter (verified for v1.61.0).
@@ -196,6 +202,47 @@ func (a *Anacrolix) Statuses() []Status {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].AddedAt.After(out[j].AddedAt) })
 	return out
+}
+
+func (a *Anacrolix) Remove(infoHash string, deleteData bool) error {
+	a.mu.Lock()
+	var (
+		found *torrent.Torrent
+		hash  metainfo.Hash
+	)
+	for _, t := range a.client.Torrents() {
+		if h := t.InfoHash(); h.HexString() == infoHash {
+			found, hash = t, h
+			break
+		}
+	}
+	if found == nil {
+		a.mu.Unlock()
+		return nil // already gone
+	}
+	diskName := found.Name() // the info name anacrolix wrote files under (attacker-influenced)
+	found.Drop()
+	delete(a.names, hash)
+	delete(a.addedAt, hash)
+	a.mu.Unlock()
+
+	if deleteData && diskName != "" {
+		return removeUnderDir(a.dataDir, diskName)
+	}
+	return nil
+}
+
+// removeUnderDir deletes name within dir, refusing any path that escapes dir or
+// targets the dir root. Torrent names are attacker-influenced, so a name like
+// "../../x" must never let os.RemoveAll reach outside the download folder.
+func removeUnderDir(dir, name string) error {
+	base := filepath.Clean(dir)
+	target := filepath.Clean(filepath.Join(base, name))
+	rel, err := filepath.Rel(base, target)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("refusing to delete %q: escapes data dir", name)
+	}
+	return os.RemoveAll(target)
 }
 
 func (a *Anacrolix) Close() error {

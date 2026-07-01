@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"shoal/internal/engine"
+	"shoal/internal/history"
 	"shoal/internal/source"
 )
 
@@ -141,6 +142,35 @@ func TestRenderSeedingShowsRatio(t *testing.T) {
 	}
 }
 
+func TestRenderSeedingHistorySection(t *testing.T) {
+	m := ready(New(&fakeSource{}, &fakeEngine{}))
+	m.section = sectionSeeding
+	m.history = history.Store{Entries: []history.Entry{
+		{InfoHash: "h1", Name: "Old Movie", Size: 1_500_000_000, CompletedAt: time.Now().Add(-48 * time.Hour)},
+	}}
+	v := m.View()
+	for _, want := range []string{"HISTORY", "Old Movie"} {
+		if !strings.Contains(v, want) {
+			t.Fatalf("seeding history missing %q:\n%s", want, v)
+		}
+	}
+}
+
+func TestSeedingHistoryDedupsActive(t *testing.T) {
+	eng := &fakeEngine{statuses: []engine.Status{
+		{Name: "Now Seeding", InfoHash: "dup", TotalBytes: 1000, CompletedBytes: 1000, Uploaded: 500, Done: true},
+	}}
+	m := ready(New(&fakeSource{}, eng))
+	m, _ = update(m, tickMsg(time.Now()))
+	m.section = sectionSeeding
+	m.history = history.Store{Entries: []history.Entry{
+		{InfoHash: "dup", Name: "Now Seeding", Size: 1000, CompletedAt: time.Now()},
+	}}
+	if got := strings.Count(m.View(), "Now Seeding"); got != 1 {
+		t.Fatalf("actively-seeding torrent must not also appear under HISTORY, count=%d", got)
+	}
+}
+
 func TestMoveLeftFilterAndSetting(t *testing.T) {
 	// Search: → then ← returns the filter to All.
 	m := ready(New(&fakeSource{}, &fakeEngine{}))
@@ -230,6 +260,20 @@ func TestRenderDownloadsShowsSpeed(t *testing.T) {
 	m.dlSpeed = nil
 	if strings.Contains(m.View(), "/s") {
 		t.Fatalf("no sampled speed should render no /s suffix:\n%s", m.View())
+	}
+}
+
+func TestRenderDownloadsCancelPrompt(t *testing.T) {
+	m := ready(New(&fakeSource{}, &fakeEngine{}))
+	m.section = sectionDownloads
+	m.statuses = []engine.Status{{Name: "Movie", InfoHash: "h", TotalBytes: 100, CompletedBytes: 10}}
+	m.cancelConfirm = true
+	m.cancelTarget = m.statuses[0]
+	v := m.View()
+	for _, want := range []string{"Cancel", "keep files", "delete files"} {
+		if !strings.Contains(v, want) {
+			t.Fatalf("cancel prompt missing %q:\n%s", want, v)
+		}
 	}
 }
 
