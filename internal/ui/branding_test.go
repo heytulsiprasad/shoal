@@ -34,6 +34,22 @@ func TestCompactHeaderOnSmallTerminal(t *testing.T) {
 	}
 }
 
+func TestBannerToastTruncatesNotDrops(t *testing.T) {
+	m := New(&fakeSource{}, &fakeEngine{})
+	m.width, m.height, m.ready, m.booting = 80, 24, true, false // banner mode (≥60×20)
+	m.notice = "Added: The Zookeeper's Wife (2017) [1080p] [YTS.AG]"
+	if m.headerHeight() != 6 {
+		t.Fatalf("precondition: expected banner mode, headerHeight=%d", m.headerHeight())
+	}
+	h := m.renderHeader()
+	if !strings.Contains(h, glyphDone) {
+		t.Fatalf("banner should show the (truncated) toast at 80 cols, not drop it:\n%s", h)
+	}
+	if !strings.Contains(h, "Added:") {
+		t.Fatalf("banner toast should show a prefix of the notice:\n%s", h)
+	}
+}
+
 func TestRenderLogoWordmark(t *testing.T) {
 	for _, got := range []string{renderLogo(60), renderLogoCompact(60)} {
 		if !strings.Contains(got, "s  h  o  a  l") {
