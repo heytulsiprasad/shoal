@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"shoal/internal/history"
 	"shoal/internal/source"
 )
 
@@ -368,7 +369,18 @@ func (m Model) renderDownloads(w, h int) string {
 
 func (m Model) renderSeeding(w, h int) string {
 	ss := m.seeding()
-	if len(ss) == 0 {
+	active := make(map[string]bool, len(ss))
+	for _, s := range ss {
+		active[s.InfoHash] = true
+	}
+	var hist []history.Entry
+	for _, e := range m.history.Entries {
+		if !active[e.InfoHash] {
+			hist = append(hist, e)
+		}
+	}
+
+	if len(ss) == 0 && len(hist) == 0 {
 		return "  " + st.Meta.Render("Nothing seeding yet. Completed downloads keep sharing here.")
 	}
 
@@ -391,6 +403,22 @@ func (m Model) renderSeeding(w, h int) string {
 		b.WriteString("  " + st.Good.Render(glyphDone+" complete") + st.Meta.Render(truncate(detail, max(4, w-14))) + "\n")
 		if i < shown-1 {
 			b.WriteString("\n")
+		}
+	}
+
+	if len(hist) > 0 {
+		if len(ss) > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(st.SectionHead.Render("HISTORY") + "\n")
+		const histMax = 50
+		for i, e := range hist {
+			if i >= histMax {
+				b.WriteString("  " + st.Faint.Render(fmt.Sprintf("%s %d more %s", glyphMore, len(hist)-histMax, glyphDown)) + "\n")
+				break
+			}
+			meta := "  ·  " + sizeOrDash(e.Size) + "  ·  " + relTime(e.CompletedAt.Unix())
+			b.WriteString("  " + st.Good.Render(glyphDone+" ") + st.Row.Render(truncate(e.Name, max(4, w-24))) + st.Meta.Render(meta) + "\n")
 		}
 	}
 	return b.String()
