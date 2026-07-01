@@ -65,12 +65,12 @@ func (s Store) Save() error {
 	if s.Path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(s.Path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.Path), 0o700); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.Path, b, 0o644)
+	return os.WriteFile(s.Path, b, 0o600)
 }

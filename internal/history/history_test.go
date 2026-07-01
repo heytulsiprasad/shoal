@@ -1,6 +1,7 @@
 package history
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -23,6 +24,19 @@ func TestAppendSaveLoadRoundTrip(t *testing.T) {
 	}
 	if got.Entries[0].InfoHash != "b" {
 		t.Fatalf("newest-first expected b first, got %q", got.Entries[0].InfoHash)
+	}
+}
+
+func TestSaveUsesOwnerOnlyPerms(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sub", "history.json")
+	s := LoadFrom(path)
+	s.Append(Entry{InfoHash: "a", Name: "X"}) // Append persists via Save
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("history.json perms = %o, want 0600 (owner-only; it lists what you downloaded)", perm)
 	}
 }
 
