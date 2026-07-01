@@ -421,3 +421,37 @@ func TestQuitKeys(t *testing.T) {
 		t.Error("ctrl+c should quit even while editing")
 	}
 }
+
+func TestStreamingUpdatesMergeAndCount(t *testing.T) {
+	m := New(source.NewCurated(), nil)
+	m.searchGen = 1
+	m.searching = true
+	m.searchCh = make(chan source.SourceUpdate, 1)
+
+	// current-generation update: merges, sorts, records counts
+	upd := sourceUpdateMsg{gen: 1, up: source.SourceUpdate{
+		Results: []source.Result{{Title: "x", Popularity: 3}, {Title: "y", Popularity: 8}},
+		Done:    1, Total: 2,
+	}}
+	m2, _ := m.Update(upd)
+	mm := m2.(Model)
+	if len(mm.results) != 2 || mm.sourcesDone != 1 || mm.sourcesTotal != 2 {
+		t.Fatalf("after update: results=%d done=%d total=%d", len(mm.results), mm.sourcesDone, mm.sourcesTotal)
+	}
+	if mm.results[0].Title != "y" { // default sort = Popularity desc
+		t.Fatalf("results not health-sorted: %s first", mm.results[0].Title)
+	}
+
+	// stale-generation update is ignored
+	stale := sourceUpdateMsg{gen: 0, up: source.SourceUpdate{Results: []source.Result{{Title: "z"}}, Done: 9, Total: 9}}
+	m3, _ := mm.Update(stale)
+	if mmm := m3.(Model); len(mmm.results) != 2 || mmm.sourcesDone != 1 {
+		t.Fatalf("stale update should be ignored, got results=%d done=%d", len(mmm.results), mmm.sourcesDone)
+	}
+
+	// close ends the spinner
+	m4, _ := mm.Update(searchClosedMsg{gen: 1})
+	if m4.(Model).searching {
+		t.Fatalf("searchClosedMsg should stop searching")
+	}
+}

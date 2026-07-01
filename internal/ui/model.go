@@ -66,6 +66,17 @@ type Model struct {
 	cursor      int
 	filter      int // index into filterCats
 
+	searchCh     chan source.SourceUpdate
+	sourcesDone  int
+	sourcesTotal int
+	searchGen    int
+	searchCancel context.CancelFunc
+
+	sortMode  bool
+	sortCol   int
+	sortField sortField
+	sortDesc  bool
+
 	statuses  []engine.Status
 	setCursor int // index into settingItems()
 
@@ -113,6 +124,7 @@ func NewWithConfig(src source.Source, eng engine.Engine, cfg config.Config) Mode
 		src:      src,
 		eng:      eng,
 		cfg:      cfg,
+		sortDesc: true,
 	}
 }
 
@@ -126,6 +138,13 @@ type searchDoneMsg struct {
 	results []source.Result
 	err     error
 }
+
+type sourceUpdateMsg struct {
+	gen int
+	up  source.SourceUpdate
+}
+
+type searchClosedMsg struct{ gen int }
 
 type addedMsg struct {
 	title string
@@ -144,6 +163,50 @@ func searchCmd(src source.Source, query string) tea.Cmd {
 		defer cancel()
 		res, err := src.Search(ctx, query)
 		return searchDoneMsg{results: res, err: err}
+	}
+}
+
+// streamSearcher is implemented by sources that can report per-source
+// progress (e.g. source.MultiSource) instead of blocking for the full result.
+type streamSearcher interface {
+	SearchStream(ctx context.Context, query string, ch chan<- source.SourceUpdate)
+}
+
+// startSearch begins a new (generation-tagged) search, streaming per-source
+// updates when the source supports it, else falling back to a blocking search.
+func (m *Model) startSearch(query string) tea.Cmd {
+	if m.searchCancel != nil {
+		m.searchCancel()
+		m.searchCancel = nil
+	}
+	m.searchGen++
+	m.results = nil
+	m.cursor = 0
+	m.sourcesDone = 0
+	m.sourcesTotal = 0
+	m.searching = true
+	m.hasSearched = true
+
+	ss, ok := m.src.(streamSearcher)
+	if !ok {
+		return searchCmd(m.src, query)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	m.searchCancel = cancel
+	ch := make(chan source.SourceUpdate)
+	m.searchCh = ch
+	gen := m.searchGen
+	go ss.SearchStream(ctx, query, ch)
+	return waitForUpdate(gen, ch)
+}
+
+func waitForUpdate(gen int, ch chan source.SourceUpdate) tea.Cmd {
+	return func() tea.Msg {
+		up, ok := <-ch
+		if !ok {
+			return searchClosedMsg{gen: gen}
+		}
+		return sourceUpdateMsg{gen: gen, up: up}
 	}
 }
 
@@ -198,6 +261,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(msg.results) == 0 {
 				m.setNotice("No results.")
 			}
+		}
+		return m, nil
+
+	case sourceUpdateMsg:
+		if msg.gen != m.searchGen {
+			return m, nil
+		}
+		if len(msg.up.Results) > 0 {
+			m.results = append(m.results, msg.up.Results...)
+			applySort(m.results, m.sortField, m.sortDesc)
+		}
+		m.sourcesDone = msg.up.Done
+		m.sourcesTotal = msg.up.Total
+		if n := len(m.filteredResults()); m.cursor >= n {
+			m.cursor = max(0, n-1)
+		}
+		return m, waitForUpdate(msg.gen, m.searchCh)
+
+	case searchClosedMsg:
+		if msg.gen != m.searchGen {
+			return m, nil
+		}
+		m.searching = false
+		if len(m.results) == 0 {
+			m.setNotice("No results.")
 		}
 		return m, nil
 
@@ -314,10 +402,9 @@ func (m Model) handleSearchEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if mag := asMagnet(q); mag != "" {
 			return m, addMagnetCmd(m.eng, mag)
 		}
-		m.searching = true
-		m.hasSearched = true
 		m.section = sectionSearch
-		return m, searchCmd(m.src, q)
+		cmd := m.startSearch(q)
+		return m, cmd
 	case "esc":
 		m.editing = false
 		m.input.Blur()
