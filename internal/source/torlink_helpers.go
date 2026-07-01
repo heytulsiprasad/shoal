@@ -155,7 +155,7 @@ func parseSize(s string) int64 {
 	return int64(math.Round(n * mul))
 }
 
-func fetchWordpressRSS(ctx context.Context, base, sourceLabel, category, sourceID, query string, client *http.Client) ([]Result, error) {
+func fetchWordpressRSS(ctx context.Context, base, sourceLabel, category, query string, client *http.Client) ([]Result, error) {
 	q := strings.TrimSpace(query)
 	endpoint := strings.TrimRight(base, "/")
 	if q == "" {
@@ -170,7 +170,7 @@ func fetchWordpressRSS(ctx context.Context, base, sourceLabel, category, sourceI
 	if err != nil {
 		return nil, err
 	}
-	return parseWordpressRSS(string(body), sourceLabel, category, sourceID), nil
+	return parseWordpressRSS(string(body), sourceLabel, category), nil
 }
 
 var (
@@ -179,7 +179,7 @@ var (
 	rssDateRE   = regexp.MustCompile(`(?is)<pubDate>(.*?)</pubDate>`)
 )
 
-func parseWordpressRSS(xml, sourceLabel, category, sourceID string) []Result {
+func parseWordpressRSS(xml, sourceLabel, category string) []Result {
 	items := strings.Split(xml, "<item>")
 	out := make([]Result, 0, len(items))
 	for _, item := range items[1:] {
@@ -193,14 +193,12 @@ func parseWordpressRSS(xml, sourceLabel, category, sourceID string) []Result {
 			title = parsed.Name
 		}
 		out = append(out, Result{
-			Title:      title,
-			Source:     sourceLabel,
-			Category:   category,
-			Popularity: 0,
-			Magnet:     parsed.Magnet,
+			Title:    title,
+			Source:   sourceLabel,
+			Category: category,
+			Added:    parseTimeUnix(firstSubmatch(rssDateRE, item)),
+			Magnet:   parsed.Magnet,
 		})
-		_ = sourceID
-		_ = parseTimeUnix(firstSubmatch(rssDateRE, item))
 	}
 	return out
 }
