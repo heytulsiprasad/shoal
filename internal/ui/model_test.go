@@ -82,7 +82,8 @@ func key(s string) tea.KeyMsg {
 func ready(m Model) Model {
 	out, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = out.(Model)
-	m.cfg.Path = "" // never write a real config file during tests
+	m.cfg.Path = ""   // never write a real config file during tests
+	m.booting = false // ready() = the app is up and settled, past the splash
 	return m
 }
 
@@ -126,6 +127,36 @@ func TestNewModelDefaults(t *testing.T) {
 	}
 }
 
+func TestBootingStartsTrueAndReadyClearsIt(t *testing.T) {
+	if !New(&fakeSource{}, &fakeEngine{}).booting {
+		t.Fatal("a fresh model should start booting (playing the splash)")
+	}
+	if ready(New(&fakeSource{}, &fakeEngine{})).booting {
+		t.Fatal("ready() should represent a settled app (booting cleared)")
+	}
+}
+
+func TestFrameMsgAdvancesAndSettles(t *testing.T) {
+	m := New(&fakeSource{}, &fakeEngine{})
+	m.frame = splashFrames - 1
+	m2, _ := m.Update(frameMsg{})
+	if m2.(Model).booting {
+		t.Fatalf("booting should clear once frame reaches splashFrames")
+	}
+}
+
+func TestAnyKeySkipsSplash(t *testing.T) {
+	m := New(&fakeSource{}, &fakeEngine{})
+	m.width, m.height, m.ready = 100, 30, true // ready but still booting
+	if !m.booting {
+		t.Fatal("precondition: still booting")
+	}
+	m2, _ := update(m, key("j"))
+	if m2.booting {
+		t.Fatal("any key should skip the splash (clear booting)")
+	}
+}
+
 func TestWindowSizeMakesReady(t *testing.T) {
 	m := ready(New(&fakeSource{}, &fakeEngine{}))
 	if !m.ready || m.width != 100 || m.height != 30 {
@@ -135,8 +166,12 @@ func TestWindowSizeMakesReady(t *testing.T) {
 
 func TestHomeShownBeforeFirstSearch(t *testing.T) {
 	m := ready(New(&fakeSource{}, &fakeEngine{}))
-	if !strings.Contains(m.View(), "Welcome to shoal") {
-		t.Error("first-run Search pane should show the welcome screen")
+	v := m.View()
+	if !strings.Contains(v, "s  h  o  a  l") {
+		t.Error("first-run home screen should show the compact shoal logo")
+	}
+	if !strings.Contains(v, "HOW IT WORKS") {
+		t.Error("first-run home screen should still show the how-it-works guide")
 	}
 }
 

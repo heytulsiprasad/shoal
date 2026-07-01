@@ -50,6 +50,8 @@ var filterCats = []filterCat{
 type Model struct {
 	width, height int
 	ready         bool
+	booting       bool // playing the animated startup splash
+	frame         int  // splash animation frame counter
 
 	section        section
 	editing        bool // search box focused?
@@ -141,6 +143,7 @@ func NewWithConfig(src source.Source, eng engine.Engine, cfg config.Config) Mode
 		eng:      eng,
 		cfg:      cfg,
 		sortDesc: true,
+		booting:  true,
 	}
 }
 
@@ -152,7 +155,7 @@ func (m Model) WithHistory(h history.Store) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, m.spin.Tick, tickCmd())
+	return tea.Batch(textinput.Blink, m.spin.Tick, tickCmd(), frameCmd())
 }
 
 // --- messages & commands ---------------------------------------------------
@@ -184,6 +187,19 @@ type tickMsg time.Time
 
 func tickCmd() tea.Cmd {
 	return tea.Tick(700*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+const (
+	frameInterval = 55 * time.Millisecond // ~18fps splash
+	splashFrames  = 36                    // ≈ 2s
+)
+
+func (m Model) splashT() float64 { return float64(m.frame) * frameInterval.Seconds() }
+
+type frameMsg struct{}
+
+func frameCmd() tea.Cmd {
+	return tea.Tick(frameInterval, func(time.Time) tea.Msg { return frameMsg{} })
 }
 
 func searchCmd(src source.Source, query string) tea.Cmd {
@@ -410,6 +426,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tickCmd()
 
+	case frameMsg:
+		if !m.booting {
+			return m, nil
+		}
+		m.frame++
+		if m.frame >= splashFrames {
+			m.booting = false
+			return m, nil
+		}
+		return m, frameCmd()
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
@@ -433,6 +460,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
+	}
+
+	if m.booting {
+		m.booting = false
+		return m, nil
 	}
 
 	if m.showHelp {
