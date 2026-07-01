@@ -13,7 +13,10 @@ import (
 
 func (m Model) View() string {
 	if !m.ready {
-		return "  starting shoal…"
+		return m.renderSplash(80, 24, 0, false) // pre-size flash: still logo
+	}
+	if m.booting {
+		return m.renderSplash(m.width, m.height, m.splashT(), true)
 	}
 	if m.showHelp {
 		return m.helpView()
