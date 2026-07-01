@@ -1,6 +1,12 @@
 package ui
 
-import "testing"
+import (
+	"math"
+	"testing"
+	"time"
+
+	"shoal/internal/source"
+)
 
 func TestTruncate(t *testing.T) {
 	cases := []struct {
@@ -86,5 +92,71 @@ func TestSizeOrDash(t *testing.T) {
 	}
 	if got := sizeOrDash(1024); got != "1.0 KiB" {
 		t.Errorf("sizeOrDash(1024) = %q, want 1.0 KiB", got)
+	}
+}
+
+func TestLeechSeedRatio(t *testing.T) {
+	if got := leechSeedRatio(source.Result{Seeders: 10, Leechers: 5}); got != 0.5 {
+		t.Fatalf("ratio = %v, want 0.5", got)
+	}
+	if got := leechSeedRatio(source.Result{Seeders: 0, Leechers: 3}); !math.IsInf(got, 1) {
+		t.Fatalf("ratio with 0 seeders = %v, want +Inf", got)
+	}
+	if got := leechSeedRatio(source.Result{Seeders: 0, Leechers: 0}); got != 0 {
+		t.Fatalf("ratio with no swarm = %v, want 0", got)
+	}
+}
+
+func TestApplySort(t *testing.T) {
+	rs := []source.Result{
+		{Title: "a", SizeBytes: 100, Seeders: 1, Leechers: 9, Popularity: 1},
+		{Title: "b", SizeBytes: 300, Seeders: 9, Leechers: 1, Popularity: 9},
+		{Title: "c", SizeBytes: 200, Seeders: 5, Leechers: 0, Popularity: 5},
+	}
+	applySort(rs, sortSize, true) // desc
+	if rs[0].Title != "b" || rs[2].Title != "a" {
+		t.Fatalf("size desc order = %v", titles(rs))
+	}
+	applySort(rs, sortSeeders, false) // asc
+	if rs[0].Title != "a" || rs[2].Title != "b" {
+		t.Fatalf("seeders asc order = %v", titles(rs))
+	}
+	applySort(rs, sortNone, true) // by Popularity desc
+	if rs[0].Title != "b" || rs[2].Title != "a" {
+		t.Fatalf("default (popularity) order = %v", titles(rs))
+	}
+}
+
+// NOTE: `titles([]source.Result) []string` already exists in model_test.go
+// (same package `ui`) — reuse it; do NOT redeclare it here.
+
+func TestRelTime(t *testing.T) {
+	now := time.Now().Unix()
+	cases := map[int64]string{
+		0:               "",
+		now - 30:        "just now",
+		now - 3*3600:    "3h ago",
+		now - 2*86400:   "2d ago",
+		now - 400*86400: "1y ago",
+	}
+	for in, want := range cases {
+		if got := relTime(in); got != want {
+			t.Errorf("relTime(%d) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSeedLeechAndRatioStr(t *testing.T) {
+	if got := seedLeech(source.Result{Seeders: 69, Leechers: 12}); got != "69:12" {
+		t.Fatalf("seedLeech = %q, want 69:12", got)
+	}
+	if got := seedLeech(source.Result{}); got != "—" {
+		t.Fatalf("seedLeech (no data) = %q, want —", got)
+	}
+	if got := ratioStr(source.Result{Seeders: 10, Leechers: 5}); got != "0.50" {
+		t.Fatalf("ratioStr = %q, want 0.50", got)
+	}
+	if got := ratioStr(source.Result{}); got != "—" {
+		t.Fatalf("ratioStr (no data) = %q, want —", got)
 	}
 }
