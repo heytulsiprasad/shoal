@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"shoal/internal/source"
 )
 
 func (m Model) View() string {
@@ -87,6 +89,9 @@ func (m Model) renderMain(w, h int) string {
 	case sectionSettings:
 		return m.renderSettings(w, h)
 	default:
+		if m.showDetail {
+			return m.renderDetail(w, h)
+		}
 		return m.renderSearch(w, h)
 	}
 }
@@ -258,6 +263,56 @@ func (m Model) renderSortBar() string {
 	return st.SectionHead.Render("Sort ▸") + " " + strings.Join(parts, "   ")
 }
 
+func (m Model) renderDetail(w, h int) string {
+	r := m.detail
+	boxW := max(24, w)
+
+	var b strings.Builder
+	b.WriteString(st.Row.Render(truncate(r.Title, boxW-4)) + "\n\n")
+
+	row := func(label, val string) {
+		if val == "" {
+			return
+		}
+		b.WriteString(st.Faint.Render(padRight(label, 8)) + " " + val + "\n")
+	}
+
+	row("Size", st.Row.Render(sizeOrDash(r.SizeBytes)))
+	row("Health", detailHealth(r))
+	if r.Files > 0 {
+		row("Files", st.Row.Render(fmt.Sprintf("%d", r.Files)))
+	}
+	row("Added", st.Meta.Render(relTime(r.Added)))
+	if pm := source.ParseMagnetInfoHash(r.Magnet); pm != "" {
+		row("Hash", st.Faint.Render(pm))
+	}
+	if r.Magnet != "" {
+		row("Magnet", st.Faint.Render(truncate(r.Magnet, boxW-14)))
+	} else if r.TorrentURL != "" {
+		row("Torrent", st.Faint.Render(truncate(r.TorrentURL, boxW-14)))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(st.Key.Render("d") + " " + st.KeyDesc.Render("Download") + "   " + st.FooterSep.Render("·") + "   ")
+	b.WriteString(st.Key.Render("y") + " " + st.KeyDesc.Render("Copy magnet") + "   " + st.FooterSep.Render("·") + "   ")
+	b.WriteString(st.Key.Render("esc") + " " + st.KeyDesc.Render("back"))
+
+	query := st.SearchLabel.Render("❯ ") + truncate(m.input.Value(), boxW-6)
+	search := titledBox("Search", "", query, boxW, false)
+	details := titledBox("Details", r.Source, b.String(), boxW, true)
+	return search + "\n" + details
+}
+
+func detailHealth(r source.Result) string {
+	if r.Seeders == 0 && r.Leechers == 0 {
+		if r.Popularity > 0 {
+			return st.Meta.Render(fmt.Sprintf("%s downloads", thousands(r.Popularity)))
+		}
+		return st.Meta.Render("—")
+	}
+	return st.Good.Render(fmt.Sprintf("%d", r.Seeders)) + st.Meta.Render(fmt.Sprintf(" seeders · %d leechers", r.Leechers))
+}
+
 // --- Downloads (in progress) -----------------------------------------------
 
 func (m Model) renderDownloads(w, h int) string {
@@ -393,10 +448,15 @@ func (m Model) renderFooter() string {
 		parts = []string{hint("enter", "search"), hint("esc", "cancel")}
 	case m.editingSetting:
 		parts = []string{hint("enter", "save"), hint("esc", "cancel")}
+	case m.showDetail:
+		parts = []string{hint("d", "download"), hint("y", "copy magnet"), hint("esc", "back")}
+	case m.sortMode:
+		parts = []string{hint("←→", "column"), hint("↑↓", "direction"), hint("esc", "done")}
 	case m.section == sectionSearch:
 		parts = []string{
 			hint("/", "search"), hint("↑↓", "move"), hint("←→", "filter"),
-			hint("d", "download"), hint("tab", "panes"), hint("?", "help"), hint("q", "quit"),
+			hint("enter", "details"), hint("d", "download"), hint("S", "sort"),
+			hint("tab", "panes"), hint("?", "help"), hint("q", "quit"),
 		}
 	case m.section == sectionSettings:
 		parts = []string{
@@ -412,11 +472,13 @@ func (m Model) renderFooter() string {
 func (m Model) helpView() string {
 	rows := [][2]string{
 		{"/", "focus the search box and start typing"},
-		{"enter", "run the search · download · edit a setting"},
-		{"esc", "leave the search box / cancel an edit"},
+		{"enter", "run the search · open a result's details"},
+		{"esc", "leave the search box / close details / cancel"},
 		{"↑ ↓ / k j", "move the selection"},
 		{"← → / h l", "switch the media filter · change a setting"},
 		{"d", "download the selected result"},
+		{"S", "sort results (←→ column · ↑↓ direction)"},
+		{"y", "copy magnet (in details)"},
 		{"tab", "cycle Search · Downloads · Seeding · Settings"},
 		{"?", "toggle this help"},
 		{"q / ctrl+c", "quit"},

@@ -192,3 +192,27 @@ func TestApplyColorModeBranches(t *testing.T) {
 	}
 	applyColorMode("auto") // leave detection on for any later tests
 }
+
+func TestRenderDetail(t *testing.T) {
+	m := ready(New(&fakeSource{}, &fakeEngine{}))
+	m.showDetail = true
+	m.detail = source.Result{
+		Title:     "Magic Mike (2012) 1080p BrRip x264 - YIFY",
+		Source:    "TPB",
+		SizeBytes: 1_700_000_000,
+		Seeders:   69,
+		Leechers:  12,
+		Files:     3,
+		Added:     time.Now().Add(-48 * time.Hour).Unix(),
+		Magnet:    "magnet:?xt=urn:btih:1681fba79fa80d6db6916975e8dafb637058c87b&dn=Magic",
+	}
+
+	out := m.renderDetail(80, 24)
+	// Note: the seeder count and " seeders …" are separately styled spans, so
+	// assert on the contiguous "seeders · N leechers" run, not "69 seeders".
+	for _, want := range []string{"Details", "Magic Mike", "Size", "Health", "seeders · 12 leechers", "Files", "Added", "Hash", "1681fba7", "Magnet", "d Download", "y Copy magnet", "esc back"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("renderDetail missing %q:\n%s", want, out)
+		}
+	}
+}

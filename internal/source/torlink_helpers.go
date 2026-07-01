@@ -31,6 +31,15 @@ type parsedMagnet struct {
 
 var magnetHashRE = regexp.MustCompile(`(?i)xt=urn:btih:([a-f0-9]{40}|[a-z2-7]{32})`)
 
+// ParseMagnetInfoHash returns the 40-char hex infohash from a magnet URI, or ""
+// when the input isn't a magnet the client understands.
+func ParseMagnetInfoHash(magnet string) string {
+	if pm := parseMagnet(magnet); pm != nil {
+		return pm.InfoHash
+	}
+	return ""
+}
+
 func parseMagnet(input string) *parsedMagnet {
 	s := strings.TrimSpace(input)
 	if !strings.HasPrefix(strings.ToLower(s), "magnet:?") {
