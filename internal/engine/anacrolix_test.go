@@ -164,3 +164,39 @@ func TestAnacrolixAddTorrentURLTracksStatus(t *testing.T) {
 		t.Error("AddedAt not set")
 	}
 }
+
+func TestAnacrolixRemoveDropsTorrent(t *testing.T) {
+	eng := newEngine(t)
+	torrentBytes := buildTorrentBytes(t, bytes.Repeat([]byte("shoal"), 8000))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(torrentBytes)
+	}))
+	t.Cleanup(srv.Close)
+	if err := eng.AddTorrentURL(srv.URL, "to-remove"); err != nil {
+		t.Fatalf("AddTorrentURL: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	var hash string
+	for time.Now().Before(deadline) {
+		if all := eng.Statuses(); len(all) == 1 && all[0].InfoHash != "" {
+			hash = all[0].InfoHash
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if hash == "" {
+		t.Fatal("torrent never appeared with an InfoHash")
+	}
+
+	if err := eng.Remove(hash, false); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if got := eng.Statuses(); len(got) != 0 {
+		t.Fatalf("after Remove, Statuses() = %d, want 0", len(got))
+	}
+	// removing an unknown hash is a no-op
+	if err := eng.Remove("deadbeef", false); err != nil {
+		t.Fatalf("Remove(unknown) = %v, want nil", err)
+	}
+}

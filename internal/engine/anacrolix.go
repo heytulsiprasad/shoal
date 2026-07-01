@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -17,8 +19,9 @@ import (
 // BitTorrent stack (DHT, magnet/BEP-9 metadata, UDP trackers, web seeds,
 // seeding).
 type Anacrolix struct {
-	client *torrent.Client
-	http   *http.Client
+	client  *torrent.Client
+	http    *http.Client
+	dataDir string
 
 	seedRatio float64
 	done      chan struct{}
@@ -51,6 +54,7 @@ func NewAnacrolix(c Config) (*Anacrolix, error) {
 	a := &Anacrolix{
 		client:    client,
 		http:      &http.Client{Timeout: 30 * time.Second},
+		dataDir:   c.DataDir,
 		seedRatio: c.SeedRatio,
 		done:      make(chan struct{}),
 		addedAt:   map[metainfo.Hash]time.Time{},
@@ -185,6 +189,7 @@ func (a *Anacrolix) Statuses() []Status {
 		stats := t.Stats()
 		out = append(out, Status{
 			Name:           name,
+			InfoHash:       h.HexString(),
 			TotalBytes:     total,
 			CompletedBytes: completed,
 			// BytesWrittenData is the uploaded-payload counter (verified for v1.61.0).
@@ -196,6 +201,38 @@ func (a *Anacrolix) Statuses() []Status {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].AddedAt.After(out[j].AddedAt) })
 	return out
+}
+
+func (a *Anacrolix) Remove(infoHash string, deleteData bool) error {
+	a.mu.Lock()
+	var (
+		found *torrent.Torrent
+		hash  metainfo.Hash
+		name  string
+	)
+	for _, t := range a.client.Torrents() {
+		if t.InfoHash().HexString() == infoHash {
+			found = t
+			hash = t.InfoHash()
+			if name = a.names[hash]; name == "" {
+				name = t.Name()
+			}
+			break
+		}
+	}
+	if found == nil {
+		a.mu.Unlock()
+		return nil // already gone
+	}
+	found.Drop()
+	delete(a.names, hash)
+	delete(a.addedAt, hash)
+	a.mu.Unlock()
+
+	if deleteData && name != "" {
+		return os.RemoveAll(filepath.Join(a.dataDir, name))
+	}
+	return nil
 }
 
 func (a *Anacrolix) Close() error {

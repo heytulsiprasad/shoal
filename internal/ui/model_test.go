@@ -32,6 +32,10 @@ type fakeEngine struct {
 	addedURL    string
 	addedName   string
 	addedMagnet string
+
+	removedHash   string
+	removedDelete bool
+	removeErr     error
 }
 
 func (e *fakeEngine) AddTorrentURL(url, name string) error {
@@ -43,7 +47,12 @@ func (e *fakeEngine) AddMagnet(magnet string) error {
 	return e.magErr
 }
 func (e *fakeEngine) Statuses() []engine.Status { return e.statuses }
-func (e *fakeEngine) Close() error              { return nil }
+func (e *fakeEngine) Remove(infoHash string, deleteData bool) error {
+	e.removedHash = infoHash
+	e.removedDelete = deleteData
+	return e.removeErr
+}
+func (e *fakeEngine) Close() error { return nil }
 
 // --- helpers ---------------------------------------------------------------
 

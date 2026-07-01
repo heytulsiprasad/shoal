@@ -8,6 +8,7 @@ import "time"
 // Status is a point-in-time snapshot of one torrent, shaped for display.
 type Status struct {
 	Name           string
+	InfoHash       string // lowercase hex infohash; "" only while metadata is still fetching
 	TotalBytes     int64
 	CompletedBytes int64
 	// Uploaded is total bytes shared with peers; used by the Seeding pane to
@@ -57,6 +58,10 @@ type Engine interface {
 	AddMagnet(magnet string) error
 	// Statuses returns a snapshot of every torrent, newest first.
 	Statuses() []Status
+	// Remove stops the torrent with the given hex infohash and forgets it. When
+	// deleteData is true, its downloaded file/dir under the data dir is also
+	// removed. An unknown hash is a no-op (nil error).
+	Remove(infoHash string, deleteData bool) error
 	// Close tears the engine down.
 	Close() error
 }
