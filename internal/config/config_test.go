@@ -7,10 +7,15 @@ import (
 )
 
 // isolate points HOME (and so the OS config/data dirs) at a temp directory, so
-// Load/Save/Default never touch the real user config.
+// Load/Save/Default never touch the real user config. It also sets
+// XDG_CONFIG_HOME: os.UserConfigDir honors that over HOME on Linux, so a runner
+// with it set (e.g. GitHub Actions) would otherwise escape the sandbox and the
+// tests would read/write the real config file.
 func isolate(t *testing.T) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, ".config"))
 }
 
 func TestDefaultValues(t *testing.T) {

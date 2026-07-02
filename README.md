@@ -11,9 +11,27 @@ Bubble Tea UI.
 
 ## Install
 
-Requires **Go 1.24+**.
+**Prebuilt binaries (GitHub Releases) — no Go toolchain needed.** Download the archive
+for your platform from the [Releases page](https://github.com/StrangeNoob/shoal/releases/latest)
+— assets are named `shoal_<version>_<os>_<arch>.tar.gz` (`.zip` on Windows), where `<os>`
+is `linux`/`darwin`/`windows` and `<arch>` is `amd64`/`arm64` — unpack it and put the
+`shoal` binary on your `PATH`:
 
-**Go install (recommended):**
+```sh
+tar -xzf shoal_0.2.0_darwin_arm64.tar.gz     # pick the asset for your OS/arch
+sudo mv shoal /usr/local/bin/                # or anywhere on your $PATH
+shoal
+```
+
+Or with the GitHub CLI (edit the pattern for your OS/arch):
+
+```sh
+gh release download --repo StrangeNoob/shoal --pattern 'shoal_*_darwin_arm64.tar.gz'
+```
+
+Each release also ships a `checksums.txt` to verify the download.
+
+**Go install** (needs Go 1.24+):
 
 ```sh
 go install github.com/StrangeNoob/shoal/cmd/shoal@latest
@@ -22,7 +40,7 @@ go install github.com/StrangeNoob/shoal/cmd/shoal@latest
 This drops a `shoal` binary in your `GOBIN` (`~/go/bin` by default — make sure it's on
 your `PATH`). Then just run `shoal`.
 
-**From source:**
+**From source** (needs Go 1.24+):
 
 ```sh
 git clone https://github.com/StrangeNoob/shoal
