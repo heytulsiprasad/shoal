@@ -1035,3 +1035,15 @@ func TestOpenFolderNotices(t *testing.T) {
 		t.Error("o on an existing folder should return an open command")
 	}
 }
+
+func TestTickRecordsHistoryPath(t *testing.T) {
+	eng := &fakeEngine{statuses: []engine.Status{{Name: "Movie", InfoHash: "hh", TotalBytes: 2048, CompletedBytes: 0, Path: "/save/Movie"}}}
+	m := ready(New(&fakeSource{}, eng))
+	t0 := time.Unix(1_000_000, 0)
+	m, _ = update(m, tickMsg(t0))
+	eng.statuses = []engine.Status{{Name: "Movie", InfoHash: "hh", TotalBytes: 2048, CompletedBytes: 2048, Done: true, Path: "/save/Movie"}}
+	m, _ = update(m, tickMsg(t0.Add(time.Second)))
+	if len(m.history.Entries) != 1 || m.history.Entries[0].Path != "/save/Movie" {
+		t.Fatalf("history entry should record the on-disk Path, got %+v", m.history.Entries)
+	}
+}
