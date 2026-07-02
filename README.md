@@ -108,6 +108,22 @@ make classic    # build the CLI downloader (./shoal-classic)
 make help       # all targets
 ```
 
+## Roadmap
+
+Planned work — contributions welcome:
+
+- **CI/CD (GitHub Actions).** Run `go build`, `go vet`, `gofmt`, and the test suite on
+  every push and pull request. The workflow uses `actions/setup-go` with dependency
+  caching, so Go modules are downloaded from the proxy once and cached on the runner and
+  reused across runs (keyed on `go.sum`) instead of being re-fetched every time.
+- **Automated releases.** A tag-triggered workflow (e.g. [GoReleaser](https://goreleaser.com))
+  that cross-compiles static binaries for macOS, Linux, and Windows and publishes them to
+  GitHub Releases — so `go install` isn't the only way in.
+- **Self-update.** A `shoal update` command (and an in-app prompt) that checks GitHub
+  Releases for a newer version and replaces the running binary in place.
+- **Pause / resume downloads** and **persist the active download queue** across restarts.
+- **More sources** behind the existing `source.Source` interface, each toggleable in Settings.
+
 ## A note on use
 
 BitTorrent itself is neutral infrastructure — Linux distributions, game patches, and
