@@ -969,3 +969,40 @@ func TestSeedingPauseAndCursor(t *testing.T) {
 		t.Fatal("p on a paused seeder should resume it")
 	}
 }
+
+func TestSeedingStopFlow(t *testing.T) {
+	fe := &fakeEngine{statuses: []engine.Status{
+		{Name: "Movie", InfoHash: "h1", TotalBytes: 100, CompletedBytes: 100, Done: true},
+	}}
+	m := ready(New(&fakeSource{}, fe))
+	m.statuses = fe.statuses
+	m.section = sectionSeeding
+
+	// x opens the stop confirm
+	m, _ = update(m, key("x"))
+	if !m.stopConfirm || m.stopTarget.InfoHash != "h1" {
+		t.Fatalf("x should open the stop confirm, got confirm=%v target=%q", m.stopConfirm, m.stopTarget.InfoHash)
+	}
+	// enter stops it (removeCmd with deleteData=false)
+	m2, cmd := update(m, key("enter"))
+	if m2.stopConfirm {
+		t.Fatal("enter should close the stop confirm")
+	}
+	if cmd == nil {
+		t.Fatal("enter should return a remove command")
+	}
+	cmd()
+	if fe.removedHash != "h1" || fe.removedDelete {
+		t.Fatalf("stop should Remove(h1, deleteData=false); got hash=%q delete=%v", fe.removedHash, fe.removedDelete)
+	}
+	// esc cancels the confirm without removing
+	fe.removedHash = ""
+	m, _ = update(m, key("x"))
+	m3, _ := update(m, key("esc"))
+	if m3.stopConfirm {
+		t.Fatal("esc should cancel the stop confirm")
+	}
+	if fe.removedHash != "" {
+		t.Fatalf("esc must not Remove, got %q", fe.removedHash)
+	}
+}

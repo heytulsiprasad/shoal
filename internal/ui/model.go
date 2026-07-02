@@ -101,6 +101,8 @@ type Model struct {
 	seedCursor    int // selection in the Seeding pane
 	cancelConfirm bool
 	cancelTarget  engine.Status
+	stopConfirm   bool          // Seeding pane: confirm "stop seeding"
+	stopTarget    engine.Status // the torrent being stopped
 
 	notice      string
 	noticeErr   bool
@@ -481,6 +483,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.cancelConfirm = false
 				}
 			}
+			// Likewise, if the torrent we're asking to stop is no longer seeding,
+			// drop the stop prompt.
+			if m.stopConfirm {
+				stillSeeding := false
+				for _, s := range m.seeding() {
+					if s.InfoHash == m.stopTarget.InfoHash {
+						stillSeeding = true
+						break
+					}
+				}
+				if !stillSeeding {
+					m.stopConfirm = false
+				}
+			}
 		}
 		if m.notice != "" && time.Now().After(m.noticeUntil) {
 			m.notice = ""
@@ -587,6 +603,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCancelKey(msg)
 	}
 
+	if m.stopConfirm {
+		return m.handleStopKey(msg)
+	}
+
 	// Command mode: single keys are actions.
 	switch msg.String() {
 	case "q":
@@ -626,11 +646,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "x":
-		if m.section == sectionDownloads {
+		switch m.section {
+		case sectionDownloads:
 			ds := m.downloading()
 			if len(ds) > 0 && m.dlCursor < len(ds) {
 				m.cancelConfirm = true
 				m.cancelTarget = ds[m.dlCursor]
+			}
+		case sectionSeeding:
+			ss := m.seeding()
+			if len(ss) > 0 && m.seedCursor < len(ss) {
+				m.stopConfirm = true
+				m.stopTarget = ss[m.seedCursor]
 			}
 		}
 		return m, nil
@@ -692,6 +719,21 @@ func (m Model) handleSortKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleCancelKey handles input while the cancel-download confirm modal is
 // active: k keeps partial files, d deletes them, esc/n aborts.
+// handleStopKey handles the Seeding "stop seeding" confirm. Files are always
+// kept — this just stops sharing and forgets the torrent.
+func (m Model) handleStopKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter", "y":
+		m.stopConfirm = false
+		return m, removeCmd(m.eng, m.stopTarget.InfoHash, m.stopTarget.Name, false)
+	case "esc", "n":
+		m.stopConfirm = false
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
 func (m Model) handleCancelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "k":

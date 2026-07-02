@@ -391,6 +391,12 @@ func (m Model) renderSeeding(w, h int) string {
 	visible := max(1, h/perItem)
 
 	var b strings.Builder
+	if m.stopConfirm {
+		b.WriteString("  " + st.Bad.Render("Stop seeding ") +
+			st.Row.Render("\""+truncate(m.stopTarget.Name, max(8, w-32))+"\"") + st.Meta.Render("?   ") +
+			st.Key.Render("enter") + st.Meta.Render(" stop (keep files)   ·   ") +
+			st.Key.Render("esc") + st.Meta.Render(" back") + "\n\n")
+	}
 	shown := min(len(ss), visible)
 	for i := 0; i < shown; i++ {
 		s := ss[i]
@@ -512,6 +518,8 @@ func (m Model) renderFooter() string {
 		parts = []string{hint("←→", "column"), hint("↑↓", "direction"), hint("esc", "done")}
 	case m.cancelConfirm:
 		parts = []string{hint("k", "keep files"), hint("d", "delete files"), hint("esc", "back")}
+	case m.stopConfirm:
+		parts = []string{hint("enter", "stop"), hint("esc", "back")}
 	case m.section == sectionDownloads:
 		parts = []string{hint("↑↓", "move"), hint("p", "pause/resume"), hint("x", "cancel"), hint("tab", "panes"), hint("?", "help"), hint("q", "quit")}
 	case m.section == sectionSearch:
@@ -526,7 +534,7 @@ func (m Model) renderFooter() string {
 			hint("tab", "panes"), hint("?", "help"), hint("q", "quit"),
 		}
 	case m.section == sectionSeeding:
-		parts = []string{hint("↑↓", "move"), hint("p", "pause/resume"), hint("tab", "panes"), hint("?", "help"), hint("q", "quit")}
+		parts = []string{hint("↑↓", "move"), hint("p", "pause/resume"), hint("x", "stop"), hint("tab", "panes"), hint("?", "help"), hint("q", "quit")}
 	default:
 		parts = []string{hint("tab", "panes"), hint("?", "help"), hint("q", "quit")}
 	}
