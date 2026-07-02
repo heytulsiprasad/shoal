@@ -14,6 +14,8 @@ import (
 
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
+
+	"github.com/StrangeNoob/shoal/internal/queue"
 )
 
 // Anacrolix implements Engine on top of anacrolix/torrent — a mature, full
@@ -33,6 +35,7 @@ type Anacrolix struct {
 	names    map[metainfo.Hash]string
 	paused   map[metainfo.Hash]bool
 	maxConns int
+	store    *queue.Store
 }
 
 // maxConnsFor is the per-torrent connection cap to restore on resume: the
@@ -73,6 +76,10 @@ func NewAnacrolix(c Config) (*Anacrolix, error) {
 		names:     map[metainfo.Hash]string{},
 		paused:    map[metainfo.Hash]bool{},
 		maxConns:  maxConnsFor(c.MaxPeers),
+	}
+	if c.QueuePath != "" {
+		a.store = queue.LoadFrom(c.QueuePath)
+		a.restore()
 	}
 	if c.Seed && c.SeedRatio > 0 {
 		go a.seedRatioLoop(10 * time.Second)
@@ -121,6 +128,10 @@ func reachedRatio(uploaded, total int64, target float64) bool {
 }
 
 func (a *Anacrolix) AddTorrentURL(url, name string) error {
+	return a.addTorrentURL(url, name, true)
+}
+
+func (a *Anacrolix) addTorrentURL(url, name string, persist bool) error {
 	resp, err := a.http.Get(url)
 	if err != nil {
 		return err
@@ -142,16 +153,65 @@ func (a *Anacrolix) AddTorrentURL(url, name string) error {
 		return err
 	}
 	a.track(t, name)
+	if persist {
+		a.persist(t.InfoHash(), queue.Entry{TorrentURL: url, Name: name})
+	}
 	return nil
 }
 
 func (a *Anacrolix) AddMagnet(magnet string) error {
+	return a.addMagnet(magnet, true)
+}
+
+func (a *Anacrolix) addMagnet(magnet string, persist bool) error {
 	t, err := a.client.AddMagnet(magnet)
 	if err != nil {
 		return err
 	}
 	a.track(t, "")
+	if persist {
+		a.persist(t.InfoHash(), queue.Entry{Magnet: magnet})
+	}
 	return nil
+}
+
+// persist records an added torrent in the queue store (no-op when disabled).
+// Name falls back to the tracked name so the entry is human-readable.
+func (a *Anacrolix) persist(h metainfo.Hash, e queue.Entry) {
+	if a.store == nil {
+		return
+	}
+	e.InfoHash = h.HexString()
+	if e.Name == "" {
+		a.mu.Lock()
+		e.Name = a.names[h]
+		a.mu.Unlock()
+	}
+	a.mu.Lock()
+	a.store.Upsert(e)
+	a.mu.Unlock()
+}
+
+// restore re-adds every persisted torrent on startup (best-effort) and applies
+// paused state. A failed .torrent-URL re-fetch is skipped, leaving the entry.
+func (a *Anacrolix) restore() {
+	for _, e := range a.store.Entries {
+		var err error
+		switch {
+		case e.Magnet != "":
+			err = a.addMagnet(e.Magnet, false)
+		case e.TorrentURL != "":
+			err = a.addTorrentURL(e.TorrentURL, e.Name, false)
+		default:
+			continue
+		}
+		if err != nil {
+			continue // dead URL / bad magnet: skip, keep the entry
+		}
+		if e.Paused {
+			_ = a.Pause(e.InfoHash)
+		}
+	}
 }
 
 // track records when a torrent was added and, once its metadata arrives, starts
@@ -240,6 +300,9 @@ func (a *Anacrolix) Remove(infoHash string, deleteData bool) error {
 	found.Drop()
 	delete(a.names, hash)
 	delete(a.addedAt, hash)
+	if a.store != nil {
+		a.store.Remove(infoHash)
+	}
 	a.mu.Unlock()
 
 	if deleteData && diskName != "" {
@@ -258,6 +321,9 @@ func (a *Anacrolix) Pause(infoHash string) error {
 	t.DisallowDataDownload()
 	t.SetMaxEstablishedConns(0)
 	a.paused[h] = true
+	if a.store != nil {
+		a.store.SetPaused(infoHash, true)
+	}
 	return nil
 }
 
@@ -271,6 +337,9 @@ func (a *Anacrolix) Resume(infoHash string) error {
 	t.AllowDataDownload()
 	t.SetMaxEstablishedConns(a.maxConns)
 	a.paused[h] = false
+	if a.store != nil {
+		a.store.SetPaused(infoHash, false)
+	}
 	return nil
 }
 

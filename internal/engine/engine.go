@@ -48,6 +48,7 @@ type Config struct {
 	MaxPeers   int     // max established connections per torrent (0 = default)
 	Seed       bool    // keep seeding finished torrents
 	SeedRatio  float64 // stop seeding a torrent once uploaded/size reaches this (0 = seed forever)
+	QueuePath  string  // where to persist the set of added torrents ("" = disabled)
 }
 
 // Engine adds torrents and reports their live status.
