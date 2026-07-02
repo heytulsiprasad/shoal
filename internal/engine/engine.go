@@ -7,10 +7,17 @@ import "time"
 
 // Status is a point-in-time snapshot of one torrent, shaped for display.
 type Status struct {
-	Name           string
-	InfoHash       string // lowercase hex infohash; known immediately (from the .torrent/magnet)
-	TotalBytes     int64
+	Name       string
+	InfoHash   string // lowercase hex infohash; known immediately (from the .torrent/magnet)
+	TotalBytes int64
+	// CompletedBytes is fully downloaded, hash-verified bytes (whole pieces) —
+	// the amount that actually survives a restart. Partial in-piece data is not
+	// counted because BitTorrent/anacrolix does not persist it.
 	CompletedBytes int64
+	// Downloaded is the live count of useful payload bytes received this session
+	// (monotonic); used only to sample download speed, which stays smooth even
+	// though CompletedBytes advances a whole piece at a time.
+	Downloaded int64
 	// Uploaded is total bytes shared with peers; used by the Seeding pane to
 	// show an upload total and a ratio. Zero when unknown.
 	Uploaded int64

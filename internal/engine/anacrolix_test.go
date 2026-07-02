@@ -342,6 +342,24 @@ func TestRemoveUnderDirContainment(t *testing.T) {
 	}
 }
 
+func TestVerifiedBytes(t *testing.T) {
+	cases := []struct {
+		complete        int
+		pieceLen, total int64
+		want            int64
+	}{
+		{0, 100, 550, 0},
+		{2, 100, 550, 200},
+		{5, 100, 550, 500},
+		{6, 100, 550, 550}, // caps at total (last piece is shorter than pieceLen)
+	}
+	for _, c := range cases {
+		if got := verifiedBytes(c.complete, c.pieceLen, c.total); got != c.want {
+			t.Errorf("verifiedBytes(%d, %d, %d) = %d, want %d", c.complete, c.pieceLen, c.total, got, c.want)
+		}
+	}
+}
+
 // A dead/slow .torrent URL in the restore queue must not stall startup: URL
 // re-fetches run in the background, so NewAnacrolix returns promptly.
 func TestRestoreDoesNotBlockOnSlowURL(t *testing.T) {
