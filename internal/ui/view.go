@@ -7,7 +7,6 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/StrangeNoob/shoal/internal/history"
 	"github.com/StrangeNoob/shoal/internal/source"
 	upd "github.com/StrangeNoob/shoal/internal/update"
 )
@@ -372,16 +371,7 @@ func (m Model) renderDownloads(w, h int) string {
 
 func (m Model) renderSeeding(w, h int) string {
 	ss := m.seeding()
-	active := make(map[string]bool, len(ss))
-	for _, s := range ss {
-		active[s.InfoHash] = true
-	}
-	var hist []history.Entry
-	for _, e := range m.history.Entries {
-		if !active[e.InfoHash] {
-			hist = append(hist, e)
-		}
-	}
+	hist := m.seedHistory()
 
 	if len(ss) == 0 && len(hist) == 0 {
 		return "  " + st.Meta.Render("Nothing seeding yet. Completed downloads keep sharing here.")
@@ -449,7 +439,11 @@ func (m Model) renderSeeding(w, h int) string {
 				break
 			}
 			meta := "  ·  " + sizeOrDash(e.Size) + "  ·  " + relTime(e.CompletedAt.Unix())
-			b.WriteString("  " + st.Good.Render(glyphDone+" ") + st.Row.Render(truncate(e.Name, max(4, w-24))) + st.Meta.Render(meta) + "\n")
+			marker, nameStyle := st.Good.Render(glyphDone+" "), st.Row
+			if len(ss)+i == m.seedCursor {
+				marker, nameStyle = st.Accent.Render(glyphCursor+" "), st.RowSel
+			}
+			b.WriteString("  " + marker + nameStyle.Render(truncate(e.Name, max(4, w-24))) + st.Meta.Render(meta) + "\n")
 		}
 	}
 	return b.String()
