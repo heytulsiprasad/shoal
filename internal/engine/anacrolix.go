@@ -265,9 +265,10 @@ func (a *Anacrolix) Statuses() []Status {
 		h := t.InfoHash()
 		name := a.names[h]
 
-		var total int64
+		var total, pieceLen int64
 		if info := t.Info(); info != nil {
 			total = info.TotalLength()
+			pieceLen = info.PieceLength
 			if name == "" {
 				name = t.Name()
 			}
@@ -276,23 +277,46 @@ func (a *Anacrolix) Statuses() []Status {
 			name = h.HexString()[:12] // still fetching metadata
 		}
 
-		completed := t.BytesCompleted()
+		// Count only whole, hash-verified pieces — that's what persists across a
+		// restart. t.BytesCompleted() also includes in-memory partial-piece data
+		// that is lost on exit, which made progress appear to drop on resume.
+		var completePieces int
+		for _, r := range t.PieceStateRuns() {
+			if r.Complete {
+				completePieces += r.Length
+			}
+		}
+		verified := verifiedBytes(completePieces, pieceLen, total)
 		stats := t.Stats()
 		out = append(out, Status{
 			Name:           name,
 			InfoHash:       h.HexString(),
 			TotalBytes:     total,
-			CompletedBytes: completed,
-			// BytesWrittenData is the uploaded-payload counter (verified for v1.61.0).
-			Uploaded: stats.BytesWrittenData.Int64(),
-			Peers:    stats.ActivePeers,
-			Done:     total > 0 && completed >= total,
-			Paused:   a.paused[h],
-			AddedAt:  a.addedAt[h],
+			CompletedBytes: verified,
+			// BytesReadUsefulData is the live payload-received counter — smooth,
+			// so download speed stays fluid even though CompletedBytes steps up a
+			// whole piece at a time. BytesWrittenData is the uploaded counter.
+			Downloaded: stats.BytesReadUsefulData.Int64(),
+			Uploaded:   stats.BytesWrittenData.Int64(),
+			Peers:      stats.ActivePeers,
+			Done:       total > 0 && verified >= total,
+			Paused:     a.paused[h],
+			AddedAt:    a.addedAt[h],
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].AddedAt.After(out[j].AddedAt) })
 	return out
+}
+
+// verifiedBytes is the number of fully downloaded, hash-verified bytes given a
+// count of complete pieces — the amount that survives a restart. It caps at
+// total because the final piece is usually shorter than pieceLen.
+func verifiedBytes(completePieces int, pieceLen, total int64) int64 {
+	b := int64(completePieces) * pieceLen
+	if total > 0 && b > total {
+		b = total
+	}
+	return b
 }
 
 // torrentByHash returns the tracked torrent for a hex infohash. Caller holds mu.

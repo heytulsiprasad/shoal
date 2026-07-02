@@ -847,7 +847,8 @@ func TestTickComputesTransferSpeeds(t *testing.T) {
 	m := ready(New(&fakeSource{}, eng))
 	t0 := time.Unix(1_000_000, 0)
 	m, _ = update(m, tickMsg(t0)) // seeds the prev snapshot; no speed yet
-	eng.statuses = []engine.Status{{Name: "A", TotalBytes: 100_000_000, CompletedBytes: 2 * 1024 * 1024, Uploaded: 4 * 1024 * 1024}}
+	// download speed samples Downloaded (live payload), upload samples Uploaded
+	eng.statuses = []engine.Status{{Name: "A", TotalBytes: 100_000_000, Downloaded: 2 * 1024 * 1024, Uploaded: 4 * 1024 * 1024}}
 	m, _ = update(m, tickMsg(t0.Add(2*time.Second))) // +2 MiB down, +4 MiB up over 2s
 	if got := m.dlSpeed["A"]; got != 1024*1024 {
 		t.Fatalf("dlSpeed[A] = %d, want %d (1 MiB/s)", got, 1024*1024)

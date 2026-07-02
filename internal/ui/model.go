@@ -441,7 +441,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			now := time.Time(msg)
 			next := m.eng.Statuses()
 			dt := now.Sub(m.lastTick)
-			m.dlSpeed = computeRates(m.statuses, next, dt, func(s engine.Status) int64 { return s.CompletedBytes })
+			m.dlSpeed = computeRates(m.statuses, next, dt, func(s engine.Status) int64 { return s.Downloaded })
 			m.ulSpeed = computeRates(m.statuses, next, dt, func(s engine.Status) int64 { return s.Uploaded })
 			for _, s := range newlyCompleted(m.statuses, next) {
 				m.history.Append(history.Entry{InfoHash: s.InfoHash, Name: s.Name, Size: s.TotalBytes, CompletedAt: now})
