@@ -512,6 +512,55 @@ func TestCancelConfirmClearsWhenTargetCompletes(t *testing.T) {
 	}
 }
 
+func TestPauseKeyPausesSelectedDownload(t *testing.T) {
+	fe := &fakeEngine{statuses: []engine.Status{
+		{Name: "dl", InfoHash: "aaa", TotalBytes: 100, CompletedBytes: 10},
+	}}
+	m := ready(New(&fakeSource{}, fe))
+	m, _ = update(m, tickMsg(time.Now())) // load statuses
+	m.editing = false
+	m.section = sectionDownloads
+	m.dlCursor = 0
+
+	m2, cmd := update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	_ = m2
+	if cmd == nil {
+		t.Fatal("p should return a pause command")
+	}
+	cmd()
+	if !fe.paused["aaa"] {
+		t.Fatal("p should pause the selected download")
+	}
+
+	// A paused status → p resumes.
+	fe.statuses[0].Paused = true
+	m3 := ready(New(&fakeSource{}, fe))
+	m3, _ = update(m3, tickMsg(time.Now())) // load statuses
+	m3.editing = false
+	m3.section = sectionDownloads
+	m3.dlCursor = 0
+	_, cmd = update(m3, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	if cmd == nil {
+		t.Fatal("p should return a resume command")
+	}
+	cmd()
+	if fe.paused["aaa"] {
+		t.Fatal("p on a paused download should resume it")
+	}
+}
+
+func TestPausedDownloadRendersPaused(t *testing.T) {
+	fe := &fakeEngine{statuses: []engine.Status{
+		{Name: "dl", InfoHash: "aaa", TotalBytes: 100, CompletedBytes: 10, Paused: true},
+	}}
+	m := ready(New(&fakeSource{}, fe))
+	m, _ = update(m, tickMsg(time.Now())) // load statuses
+	m.section = sectionDownloads
+	if !strings.Contains(m.View(), "paused") {
+		t.Fatalf("a paused download should render 'paused':\n%s", m.View())
+	}
+}
+
 func TestTickPollsEngineAndReschedules(t *testing.T) {
 	eng := &fakeEngine{statuses: []engine.Status{{Name: "X", TotalBytes: 100, CompletedBytes: 50}}}
 	m := ready(New(&fakeSource{}, eng))
