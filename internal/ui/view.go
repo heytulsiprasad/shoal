@@ -521,7 +521,7 @@ func (m Model) renderFooter() string {
 	case m.stopConfirm:
 		parts = []string{hint("enter", "stop"), hint("esc", "back")}
 	case m.section == sectionDownloads:
-		parts = []string{hint("↑↓", "move"), hint("p", "pause/resume"), hint("x", "cancel"), hint("tab", "panes"), hint("?", "help"), hint("q", "quit")}
+		parts = []string{hint("↑↓", "move"), hint("o", "open"), hint("p", "pause/resume"), hint("x", "cancel"), hint("tab", "panes"), hint("?", "help"), hint("q", "quit")}
 	case m.section == sectionSearch:
 		parts = []string{
 			hint("/", "search"), hint("↑↓", "move"), hint("←→", "filter"),
@@ -534,7 +534,7 @@ func (m Model) renderFooter() string {
 			hint("tab", "panes"), hint("?", "help"), hint("q", "quit"),
 		}
 	case m.section == sectionSeeding:
-		parts = []string{hint("↑↓", "move"), hint("p", "pause/resume"), hint("x", "stop"), hint("tab", "panes"), hint("?", "help"), hint("q", "quit")}
+		parts = []string{hint("↑↓", "move"), hint("o", "open"), hint("p", "pause/resume"), hint("x", "stop"), hint("tab", "panes"), hint("?", "help"), hint("q", "quit")}
 	default:
 		parts = []string{hint("tab", "panes"), hint("?", "help"), hint("q", "quit")}
 	}
@@ -549,8 +549,9 @@ func (m Model) helpView() string {
 		{"↑ ↓ / k j", "move the selection"},
 		{"← → / h l", "switch the media filter · change a setting"},
 		{"d", "download the selected result"},
-		{"p", "pause / resume the selected download"},
-		{"x", "cancel the selected download (keep or delete files)"},
+		{"p", "pause / resume the selected download or seed"},
+		{"x", "cancel a download · stop seeding the selected torrent"},
+		{"o", "open the download's folder"},
 		{"S", "sort results (←→ column · ↑↓ direction)"},
 		{"y", "copy magnet (in details)"},
 		{"tab", "cycle Search · Downloads · Seeding · Settings"},

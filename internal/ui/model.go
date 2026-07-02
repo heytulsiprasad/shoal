@@ -6,6 +6,8 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -329,6 +331,33 @@ func addMagnetCmd(eng engine.Engine, magnet string) tea.Cmd {
 	}
 }
 
+type folderOpenedMsg struct{ err error }
+
+// openFolderCmd opens dir in the OS file manager, off the UI goroutine.
+func openFolderCmd(dir string) tea.Cmd {
+	return func() tea.Msg { return folderOpenedMsg{err: openInFileManager(dir)} }
+}
+
+// openSelected opens the selected torrent's folder, or sets a notice when it
+// isn't ready or is missing. dir is Path if it's a directory, else its parent
+// (single-file torrents live directly in the save dir).
+func (m *Model) openSelected(s engine.Status) tea.Cmd {
+	if s.Path == "" {
+		m.setNotice("download folder isn't ready yet")
+		return nil
+	}
+	fi, err := os.Stat(s.Path)
+	if err != nil {
+		m.setError("folder not found — it may have been deleted")
+		return nil
+	}
+	dir := s.Path
+	if !fi.IsDir() {
+		dir = filepath.Dir(s.Path)
+	}
+	return openFolderCmd(dir)
+}
+
 // pauseToggleCmd pauses a running torrent or resumes a paused one.
 func pauseToggleCmd(eng engine.Engine, s engine.Status) tea.Cmd {
 	return func() tea.Msg {
@@ -448,6 +477,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if n := len(m.downloading()); m.dlCursor >= n {
 			m.dlCursor = max(0, n-1)
+		}
+		return m, nil
+
+	case folderOpenedMsg:
+		if msg.err != nil {
+			m.setError("couldn't open the folder")
 		}
 		return m, nil
 
@@ -672,6 +707,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			ss := m.seeding()
 			if len(ss) > 0 && m.seedCursor < len(ss) {
 				return m, pauseToggleCmd(m.eng, ss[m.seedCursor])
+			}
+		}
+		return m, nil
+	case "o":
+		// Assign the command first: openSelected has a pointer receiver and sets
+		// the notice on m, so it must run before `return m` copies m.
+		switch m.section {
+		case sectionDownloads:
+			ds := m.downloading()
+			if len(ds) > 0 && m.dlCursor < len(ds) {
+				cmd := m.openSelected(ds[m.dlCursor])
+				return m, cmd
+			}
+		case sectionSeeding:
+			ss := m.seeding()
+			if len(ss) > 0 && m.seedCursor < len(ss) {
+				cmd := m.openSelected(ss[m.seedCursor])
+				return m, cmd
 			}
 		}
 		return m, nil

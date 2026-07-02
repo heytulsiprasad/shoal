@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1004,5 +1005,33 @@ func TestSeedingStopFlow(t *testing.T) {
 	}
 	if fe.removedHash != "" {
 		t.Fatalf("esc must not Remove, got %q", fe.removedHash)
+	}
+}
+
+func TestOpenFolderNotices(t *testing.T) {
+	// not ready: no on-disk path yet
+	fe := &fakeEngine{statuses: []engine.Status{
+		{Name: "A", InfoHash: "a", TotalBytes: 100, CompletedBytes: 10, Path: ""},
+	}}
+	m := ready(New(&fakeSource{}, fe))
+	m.statuses = fe.statuses
+	m.section = sectionDownloads
+	m2, _ := update(m, key("o"))
+	if !strings.Contains(m2.notice, "ready") {
+		t.Errorf("o with no path should notice 'not ready', got %q", m2.notice)
+	}
+
+	// deleted: path set but missing
+	fe.statuses[0].Path = filepath.Join(t.TempDir(), "gone")
+	m3, _ := update(m, key("o"))
+	if !strings.Contains(m3.notice, "deleted") || !m3.noticeErr {
+		t.Errorf("o on a missing path should error 'deleted', got %q err=%v", m3.notice, m3.noticeErr)
+	}
+
+	// existing dir → returns a command (folder open)
+	fe.statuses[0].Path = t.TempDir()
+	_, cmd := update(m, key("o"))
+	if cmd == nil {
+		t.Error("o on an existing folder should return an open command")
 	}
 }
