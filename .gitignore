@@ -1,4 +1,6 @@
 /shoal
+/shoal-classic
 *.test
 /private
+/dist/
 .superpowers/
