@@ -126,7 +126,7 @@ func searchRanked(query, category string) ([]source.Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	source.RankBySeedHealth(results)
+	source.RankByRelevance(results, query)
 	return filterCategory(results, category), nil
 }
 

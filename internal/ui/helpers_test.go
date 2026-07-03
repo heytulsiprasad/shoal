@@ -128,6 +128,17 @@ func TestApplySort(t *testing.T) {
 	if rs[0].Title != "b" || rs[2].Title != "a" {
 		t.Fatalf("default (popularity) order = %v", titles(rs))
 	}
+
+	// Best-match uses the pre-stamped Relevance score, highest first.
+	rel := []source.Result{
+		{Title: "low", Relevance: 0.2, Seeders: 100},
+		{Title: "high", Relevance: 0.9, Seeders: 1},
+		{Title: "mid", Relevance: 0.5, Seeders: 10},
+	}
+	applySort(rel, sortRelevance, true)
+	if rel[0].Title != "high" || rel[2].Title != "low" {
+		t.Fatalf("relevance desc order = %v", titles(rel))
+	}
 }
 
 // NOTE: `titles([]source.Result) []string` already exists in model_test.go

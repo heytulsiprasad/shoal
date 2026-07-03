@@ -31,22 +31,28 @@ func (s section) next() section {
 	return (s + 1) % 4
 }
 
+// prev is next's inverse, for shift+tab (Search → Settings → Seeding → …).
+func (s section) prev() section {
+	return (s + 3) % 4
+}
+
 // Key handling stays simple and conflict-free. When the search box is focused
 // (m.editing) text keys go to the input and only Enter/Esc/Ctrl+C are
 // intercepted; when a Settings text field is focused (m.editingSetting) the same
 // holds for that field. Otherwise single keys are commands:
 //
-//	/        focus the search box
-//	enter    (search box) run search; (results) download; (settings) edit a field
-//	esc      leave the search box / cancel a settings edit
-//	↑ / ↓    move the selection (results, or settings rows)
-//	← / →    change the media filter (search) or a setting's value (settings)
-//	d        download the selected result
-//	tab      cycle Search · Downloads · Seeding · Settings
-//	?        toggle help
-//	q        quit (when not typing)
-//	ctrl+c   quit (always)
+//	/            focus the search box
+//	1 2 3 4      jump straight to Search · Downloads · Seeding · Settings
+//	tab / ⇧tab   cycle the four panes forward / backward
+//	enter        (search box) run search; (results) download; (settings) edit a field
+//	esc          leave the search box / cancel a settings edit
+//	↑ / ↓        move the selection (results, or settings rows)
+//	← / →        change the media filter (search) or a setting's value (settings)
+//	d            download the selected result
+//	?            toggle help
+//	q            quit (when not typing)
+//	ctrl+c       quit (always)
 //
 // New since the original: the Seeding and Settings sections, ← / → (filter +
-// settings value), and tab cycling four panes instead of toggling two. These
-// match bubbletea's KeyMsg.String() values.
+// settings value), tab cycling four panes instead of toggling two, and direct
+// pane jumps (1–4, shift+tab). These match bubbletea's KeyMsg.String() values.

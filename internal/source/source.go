@@ -13,8 +13,12 @@ type Result struct {
 	Popularity int64 // a "health" proxy: downloads, seeders, etc.
 	Seeders    int64 // 0 when the source doesn't report it
 	Leechers   int64 // 0 when the source doesn't report it
-	Files      int   // 0 when unknown
-	Added      int64 // unix seconds, 0 when unknown
+	// Relevance is how well the title matches the query that produced it, in
+	// [0,1]. It is query-dependent, so it is stamped at search time (by
+	// RankByRelevance or the UI) rather than by the provider. 0 until scored.
+	Relevance float64
+	Files     int   // 0 when unknown
+	Added     int64 // unix seconds, 0 when unknown
 	// Category is the media type used by the UI's filter chips. For the Internet
 	// Archive this is the item's mediatype ("movies", "audio", "texts",
 	// "software", "image", …). Empty when the provider doesn't classify items;

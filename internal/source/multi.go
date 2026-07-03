@@ -3,7 +3,6 @@ package source
 import (
 	"context"
 	"fmt"
-	"sort"
 	"sync"
 	"sync/atomic"
 )
@@ -69,10 +68,11 @@ func (m *MultiSource) Search(ctx context.Context, query string) ([]Result, error
 		return nil, firstErr
 	}
 
-	// Popularity scales differ between providers, so this is a rough health
-	// ordering, not an exact ranking. Stable so same-popularity ties keep their
-	// source order.
-	sort.SliceStable(merged, func(a, b int) bool { return merged[a].Popularity > merged[b].Popularity })
+	// Providers each rank by their own opaque signal on incompatible scales, so
+	// a raw cross-provider merge is close to random. Re-rank the whole set by how
+	// well each title matches the query (best match first, healthiest swarm
+	// breaking ties) — the same ordering the TUI shows.
+	RankByRelevance(merged, query)
 	return merged, nil
 }
 

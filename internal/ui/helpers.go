@@ -114,12 +114,17 @@ const (
 	sortSeeders
 	sortLeechers
 	sortRatio
+	sortRelevance
 )
 
-var sortableCols = []sortField{sortSize, sortSeeders, sortLeechers, sortRatio}
+// sortRelevance leads the list: it's the default "best match" order and the
+// first stop when cycling columns with S.
+var sortableCols = []sortField{sortRelevance, sortSize, sortSeeders, sortLeechers, sortRatio}
 
 func (f sortField) label() string {
 	switch f {
+	case sortRelevance:
+		return "Best match"
 	case sortSize:
 		return "Size"
 	case sortSeeders:
@@ -147,6 +152,22 @@ func leechSeedRatio(r source.Result) float64 {
 
 // applySort orders rs in place (stable). desc = largest/most first.
 func applySort(rs []source.Result, f sortField, desc bool) {
+	// Best-match is multi-key (relevance band → seeders → popularity), not a
+	// single scalar, so it gets its own comparator. Results must already carry a
+	// stamped .Relevance (the UI does this as hits stream in).
+	if f == sortRelevance {
+		sort.SliceStable(rs, func(i, j int) bool {
+			switch {
+			case source.RelevanceLess(rs[i], rs[j]):
+				return desc
+			case source.RelevanceLess(rs[j], rs[i]):
+				return !desc
+			default:
+				return false
+			}
+		})
+		return
+	}
 	less := func(i, j int) bool {
 		var a, b float64
 		switch f {

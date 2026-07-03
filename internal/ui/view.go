@@ -141,11 +141,12 @@ func (m Model) renderHome(w, h int) string {
 	b.WriteString(cmd("← →", "narrow by media type · change a setting"))
 	b.WriteString(cmd("enter", "open a result's details"))
 	b.WriteString(cmd("d", "download the selected result"))
-	b.WriteString(cmd("S", "sort results  (← → column · ↑ ↓ direction)"))
+	b.WriteString(cmd("S", "sort results  (best match · size · seeders · ratio)"))
 	b.WriteString(cmd("p", "pause / resume a download"))
 	b.WriteString(cmd("x", "cancel a download  (keep or delete files)"))
 	b.WriteString(cmd("y", "copy magnet  (in a result's details)"))
-	b.WriteString(cmd("tab", "cycle Search · Downloads · Seeding · Settings"))
+	b.WriteString(cmd("1-4", "jump to Search · Downloads · Seeding · Settings"))
+	b.WriteString(cmd("tab", "cycle the panes  (shift+tab reverses)"))
 	b.WriteString(cmd("esc", "leave search · close details · cancel"))
 	b.WriteString(cmd("? / q", "show all keys · quit") + "\n")
 
@@ -529,22 +530,22 @@ func (m Model) renderFooter() string {
 	case m.stopConfirm:
 		parts = []string{hint("enter", "stop"), hint("esc", "back")}
 	case m.section == sectionDownloads:
-		parts = []string{hint("↑↓", "move"), hint("o", "open"), hint("p", "pause/resume"), hint("x", "cancel"), hint("tab", "panes"), hint("?", "help"), hint("q", "quit")}
+		parts = []string{hint("↑↓", "move"), hint("o", "open"), hint("p", "pause/resume"), hint("x", "cancel"), hint("1-4", "panes"), hint("?", "help"), hint("q", "quit")}
 	case m.section == sectionSearch:
 		parts = []string{
 			hint("/", "search"), hint("↑↓", "move"), hint("←→", "filter"),
 			hint("enter", "details"), hint("d", "download"), hint("S", "sort"),
-			hint("tab", "panes"), hint("?", "help"), hint("q", "quit"),
+			hint("1-4", "panes"), hint("?", "help"), hint("q", "quit"),
 		}
 	case m.section == sectionSettings:
 		parts = []string{
 			hint("↑↓", "move"), hint("←→", "change"), hint("enter", "edit"),
-			hint("tab", "panes"), hint("?", "help"), hint("q", "quit"),
+			hint("1-4", "panes"), hint("?", "help"), hint("q", "quit"),
 		}
 	case m.section == sectionSeeding:
-		parts = []string{hint("↑↓", "move"), hint("o", "open"), hint("p", "pause/resume"), hint("x", "stop"), hint("tab", "panes"), hint("?", "help"), hint("q", "quit")}
+		parts = []string{hint("↑↓", "move"), hint("o", "open"), hint("p", "pause/resume"), hint("x", "stop"), hint("1-4", "panes"), hint("?", "help"), hint("q", "quit")}
 	default:
-		parts = []string{hint("tab", "panes"), hint("?", "help"), hint("q", "quit")}
+		parts = []string{hint("1-4", "panes"), hint("?", "help"), hint("q", "quit")}
 	}
 	return st.Footer.Render(strings.Join(parts, sep))
 }
@@ -560,9 +561,10 @@ func (m Model) helpView() string {
 		{"p", "pause / resume the selected download or seed"},
 		{"x", "cancel a download · stop seeding the selected torrent"},
 		{"o", "open the download's folder"},
-		{"S", "sort results (←→ column · ↑↓ direction)"},
+		{"S", "sort results — best match · size · seeders · ratio (←→ column · ↑↓ direction)"},
 		{"y", "copy magnet (in details)"},
-		{"tab", "cycle Search · Downloads · Seeding · Settings"},
+		{"1 2 3 4", "jump straight to Search · Downloads · Seeding · Settings"},
+		{"tab / shift+tab", "cycle the panes forward / backward"},
 		{"?", "toggle this help"},
 		{"q / ctrl+c", "quit"},
 	}

@@ -83,6 +83,8 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEsc}
 	case "tab":
 		return tea.KeyMsg{Type: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyMsg{Type: tea.KeyShiftTab}
 	case "up":
 		return tea.KeyMsg{Type: tea.KeyUp}
 	case "down":
@@ -387,6 +389,44 @@ func TestTabCyclesFourPanes(t *testing.T) {
 		m, _ = update(m, key("tab"))
 		if m.section != w {
 			t.Fatalf("tab → %v, want %v", m.section, w)
+		}
+	}
+}
+
+func TestShiftTabCyclesBackward(t *testing.T) {
+	m := ready(New(&fakeSource{}, &fakeEngine{}))
+	m.editing = false
+	want := []section{sectionSettings, sectionSeeding, sectionDownloads, sectionSearch}
+	for _, w := range want {
+		m, _ = update(m, key("shift+tab"))
+		if m.section != w {
+			t.Fatalf("shift+tab → %v, want %v", m.section, w)
+		}
+	}
+}
+
+// Direct pane jumps are the fix for "I can only reach Search": every pane must
+// be one keystroke away, and jumping to Search must not trap the keyboard in
+// the search box (that's what "/" is for).
+func TestNumberKeysJumpToPane(t *testing.T) {
+	m := ready(New(&fakeSource{}, &fakeEngine{}))
+	m.editing = false
+	cases := []struct {
+		key  string
+		want section
+	}{
+		{"2", sectionDownloads},
+		{"3", sectionSeeding},
+		{"4", sectionSettings},
+		{"1", sectionSearch},
+	}
+	for _, c := range cases {
+		m, _ = update(m, key(c.key))
+		if m.section != c.want {
+			t.Fatalf("key %q → %v, want %v", c.key, m.section, c.want)
+		}
+		if m.editing {
+			t.Fatalf("key %q must not enter editing mode", c.key)
 		}
 	}
 }
@@ -733,16 +773,23 @@ func TestSortModeKeys(t *testing.T) {
 	}
 	m.sortDesc = true
 
-	// S enters sort mode and sorts by the first column (Size), desc → b first
+	// S enters sort mode on the default "Best match" column. With no query
+	// scored, best-match falls back to swarm health (seeders desc → b first).
 	m, _ = update(m, key("S"))
-	if !m.sortMode || m.sortField != sortSize || m.results[0].Title != "b" {
+	if !m.sortMode || m.sortField != sortRelevance || m.results[0].Title != "b" {
 		t.Fatalf("S: sortMode=%v field=%v first=%s", m.sortMode, m.sortField, m.results[0].Title)
 	}
 
-	// right moves to Seeders (still desc → a last)
+	// right moves to Size (desc → b first, size 3)
+	m, _ = update(m, key("right"))
+	if m.sortField != sortSize || m.results[0].Title != "b" {
+		t.Fatalf("right→Size: field=%v first=%s", m.sortField, m.results[0].Title)
+	}
+
+	// right again moves to Seeders (still desc → a last)
 	m, _ = update(m, key("right"))
 	if m.sortField != sortSeeders || m.results[2].Title != "a" {
-		t.Fatalf("right: field=%v last=%s", m.sortField, m.results[2].Title)
+		t.Fatalf("right→Seeders: field=%v last=%s", m.sortField, m.results[2].Title)
 	}
 
 	// up sets ascending → a first

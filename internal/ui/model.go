@@ -74,6 +74,7 @@ type Model struct {
 
 	searching   bool
 	hasSearched bool
+	query       string // the active query, kept to score result relevance
 	results     []source.Result
 	cursor      int
 	filter      int // index into filterCats
@@ -142,17 +143,18 @@ func NewWithConfig(src source.Source, eng engine.Engine, cfg config.Config) Mode
 	pr.ShowPercentage = false
 
 	return Model{
-		section:  sectionSearch,
-		editing:  false,
-		input:    ti,
-		setInput: si,
-		spin:     sp,
-		prog:     pr,
-		src:      src,
-		eng:      eng,
-		cfg:      cfg,
-		sortDesc: true,
-		booting:  true,
+		section:   sectionSearch,
+		editing:   false,
+		input:     ti,
+		setInput:  si,
+		spin:      sp,
+		prog:      pr,
+		src:       src,
+		eng:       eng,
+		cfg:       cfg,
+		sortField: sortRelevance, // default order: best match first
+		sortDesc:  true,
+		booting:   true,
 	}
 }
 
@@ -276,6 +278,7 @@ func (m *Model) startSearch(query string) tea.Cmd {
 		m.searchCancel = nil
 	}
 	m.searchGen++
+	m.query = query
 	m.results = nil
 	m.cursor = 0
 	m.sourcesDone = 0
@@ -416,7 +419,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			m.setError("Search failed: " + msg.err.Error())
 		} else {
+			for i := range msg.results {
+				msg.results[i].Relevance = source.Relevance(m.query, msg.results[i].Title)
+			}
 			m.results = msg.results
+			applySort(m.results, m.sortField, m.sortDesc)
 			m.cursor = 0
 			m.err = nil
 			if len(msg.results) == 0 {
@@ -430,6 +437,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if len(msg.up.Results) > 0 {
+			for i := range msg.up.Results {
+				msg.up.Results[i].Relevance = source.Relevance(m.query, msg.up.Results[i].Title)
+			}
 			m.results = append(m.results, msg.up.Results...)
 			applySort(m.results, m.sortField, m.sortDesc)
 		}
@@ -656,6 +666,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 	case "tab":
 		m.section = m.section.next()
+		return m, nil
+	case "shift+tab":
+		m.section = m.section.prev()
+		return m, nil
+	case "1", "2", "3", "4":
+		// Direct pane jumps. Unlike "/", jumping to Search does not steal the
+		// keyboard into the search box — it just shows the pane, navigable.
+		m.section = section(msg.String()[0] - '1')
 		return m, nil
 	case "up", "k":
 		m.moveUp()
