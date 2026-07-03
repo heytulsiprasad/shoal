@@ -63,6 +63,9 @@ const usage = `shoal — a calm BitTorrent client for your terminal
 
 Usage:
   shoal            launch the fullscreen TUI
+  shoal search     search torrents non-interactively
+  shoal download   download a query, magnet, or torrent URL
+  shoal status     show queued and completed downloads
   shoal update     update shoal to the latest release
   shoal version    print the version
   shoal help       show this help
@@ -81,6 +84,12 @@ func cli(args []string, version string, out io.Writer) (handled bool, code int) 
 	case "help", "--help", "-h":
 		fmt.Fprint(out, usage)
 		return true, 0
+	case "search":
+		return true, runSearch(args[2:], out)
+	case "download":
+		return true, runDownload(args[2:], out)
+	case "status":
+		return true, runStatus(args[2:], out)
 	case "update":
 		return true, runUpdate(out, version)
 	default:
@@ -122,6 +131,16 @@ func main() {
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		fatal(err)
 	}
+
+	l, err := acquireAppLock()
+	if err != nil {
+		if pid, ok := heldPID(err); ok {
+			fmt.Fprintln(os.Stderr, heldLockMessage(pid))
+			os.Exit(2)
+		}
+		fatal(err)
+	}
+	defer l.Release()
 
 	eng, err := engine.NewAnacrolix(engine.Config{
 		DataDir:    cfg.DataDir,

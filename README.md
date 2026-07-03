@@ -92,6 +92,27 @@ listen port, and auto-update. `↑ ↓` move, `← →` change an option, `enter
 Default sources: the Internet Archive, a small open-media catalogue, and public
 indexes — FitGirl, YTS, The Pirate Bay, 1337x, EZTV, SolidTorrents, Nyaa, and SubsPlease.
 
+## Scripting
+
+shoal also has non-interactive commands for shell scripts and launchers:
+
+```sh
+shoal search "ubuntu iso" --limit=10
+shoal download "ubuntu iso" --index=0 --timeout=5m
+shoal status --json
+```
+
+`shoal search` prints ranked results, with `--json` returning full result fields plus
+`rank`. `shoal download` accepts a search query, magnet link, or `.torrent` URL and
+prints progress until the download completes, times out, or is interrupted. `shoal status`
+reads the persisted queue and completion history without starting the torrent engine.
+
+For example, pipe the second JSON search result's magnet into a JSON-mode download:
+
+```sh
+shoal search "some query" --json | jq -r '.[1].magnet' | xargs shoal download --json
+```
+
 ## Updating
 
 shoal can update itself from GitHub Releases:
